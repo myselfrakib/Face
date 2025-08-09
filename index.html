@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Face Recognition with Rename UI</title>
+<style>
+  body { font-family: Arial, sans-serif; margin: 20px; background: #f0f0f0; }
+  h2 { margin-bottom: 5px; }
+  #container { position: relative; display: inline-block; }
+  video, canvas { border-radius: 8px; border: 2px solid #444; }
+  canvas { position: absolute; top: 0; left: 0; }
+  #status { margin-top: 10px; font-weight: bold; color: #333; }
+  #facesList {
+    max-width: 720px;
+    margin-top: 20px;
+    background: #fff;
+    border-radius: 8px;
+    padding: 10px;
+    box-shadow: 0 3px 10px rgb(0 0 0 / 0.1);
+  }
+  #facesList h3 { margin-top: 0; }
+  .face-item {
+    display: flex;
+    justify-content: space-between;
+    margin: 6px 0;
+    padding: 6px;
+    border-bottom: 1px solid #ddd;
+  }
+  .face-item input[type="text"] {
+    flex-grow: 1;
+    font-size: 16px;
+    padding: 4px 6px;
+    border: 1px solid #aaa;
+    border-radius: 4px;
+  }
+  .face-item button {
+    margin-left: 10px;
+    padding: 4px 10px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  #loading {
+    position: fixed;
+    top: 10px;
+    right: 10px;
+    background: #0078d7;
+    color: white;
+    padding: 6px 12px;
+    border-radius: 6px;
+    display: none;
+    font-weight: bold;
+  }
+</style>
+</head>
+<body>
+
+<h2>Face Recognition with Firebase</h2>
+
+<div id="container">
+  <video id="video" width="720" height="560" autoplay muted></video>
+  <canvas id="overlay" width="720" height="560"></canvas>
+</div>
+
+<p id="status">Loading models...</p>
+<div id="loading">Loading...</div>
+
+<div id="facesList">
+  <h3>Known Faces (Rename Allowed)</h3>
+  <div id="facesContainer">No faces loaded yet.</div>
+</div>
+
+<!-- Load face-api.js -->
+<script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+
+<!-- Load Firebase -->
+<script defer src="https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js"></script>
+<script defer src="https://www.gstatic.com/firebasejs/11.6.0/firebase-database.js"></script>
+
+<script>
+(async () => {
+  const video = document.getElementById('video');
+  const canvas = document.getElementById('overlay');
+  const ctx = canvas.getContext('2d');
+  const statusEl = document.getElementById('status');
+  const loadingEl = document.getElementById('loading');
+  const facesContainer = document.getElementById('facesContainer');
+
+  // Firebase config
+  const firebaseConfig = {
+    apiKey: "AIzaSyDsn16p7w8b-x8pEA_WTO5F2oUk4MHwcUc",
+    authDomain: "wavetravel-3c4c4.firebaseapp.com",
+    databaseURL: "https://wavetravel-3c4c4-default-rtdb.firebaseio.com",
+    projectId: "wavetravel-3c4c4",
+    storageBucket: "wavetravel-3c4c4.appspot.com",
+    messagingSenderId: "298226098137",
+    appId: "1:298226098137:web:720953b80e3e61c8bc43c8"
+  };
+
+  // Initialize Firebase app
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.database();
+
+  // Load face-api models
+  statusEl.textContent = "Loading models...";
+  await Promise.all([
+    faceapi.nets.tinyFaceDetector.loadFromUri('https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/weights'),
+    faceapi.nets.faceRecognitionNet.loadFromUri('https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/weights'),
+    faceapi.nets.faceLandmark68Net.loadFromUri('https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/weights'),
+  ]);
+  statusEl.textContent = "Models loaded.";
+
+  // Start webcam
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: {} });
+    video.srcObject = stream;
+    await video.play();
+  } catch (err) {
+    statusEl.textContent = "Error accessing webcam: " + err.message;
+    return;
+  }
+
+  // Variables
+  let knownFaces = []; // {id, name, descriptor}
+  let nextTicketId = 100;
+  const DISTANCE_THRESHOLD = 0.5;
+  let isSaving = false;
+
+  // Load known faces from Firebase
+  async function loadKnownFaces() {
+    loadingEl.style.display = 'block';
+    facesContainer.textContent = "Loading faces from database...";
+    try {
+      const snapshot = await db.ref('faces').get();
+      if(snapshot.exists()) {
+        const data = snapshot.val();
+        knownFaces = Object.entries(data).map(([id, face]) => ({
+          id,
+          name: face.name,
+          descriptor: new Float32Array(face.encoding)
+        }));
+        // Update nextTicketId by max numeric in id if id like 'ticketX'
+        knownFaces.forEach(f => {
+          const num = parseInt(f.name.replace('ticket',''));
+          if(!isNaN(num) && num >= nextTicketId) nextTicketId = num + 1;
+        });
+        updateFacesListUI();
+      } else {
+        facesContainer.textContent = "No known faces found.";
+      }
+    } catch(e) {
+      facesContainer.textContent = "Error loading faces: " + e.message;
+    }
+    loadingEl.style.display = 'none';
+  }
+
+  // Update faces list UI with inputs to rename
+  function updateFacesListUI(){
+    if(knownFaces.length === 0){
+      facesContainer.textContent = "No known faces loaded.";
+      return;
+    }
+    facesContainer.innerHTML = "";
+    knownFaces.forEach(face => {
+      const div = document.createElement('div');
+      div.className = "face-item";
+
+      const input = document.createElement('input');
+      input.type = "text";
+      input.value = face.name;
+      input.title = "Edit name and press Enter";
+
+      input.addEventListener('keydown', async (e) => {
+        if(e.key === 'Enter'){
+          const newName = input.value.trim();
+          if(newName && newName !== face.name){
+            loadingEl.style.display = 'block';
+            try {
+              await db.ref('faces/' + face.id).update({name: newName});
+              face.name = newName;
+              statusEl.textContent = `Renamed to ${newName}`;
+            } catch(err) {
+              statusEl.textContent = "Rename failed: " + err.message;
+              input.value = face.name; // revert
+            }
+            loadingEl.style.display = 'none';
+            updateFacesListUI();
+          }
+        }
+      });
+
+      const btn = document.createElement('button');
+      btn.textContent = "Reset";
+      btn.title = "Reset to original name";
+      btn.onclick = () => {
+        input.value = face.name;
+      };
+
+      div.appendChild(input);
+      div.appendChild(btn);
+      facesContainer.appendChild(div);
+    });
+  }
+
+  await loadKnownFaces();
+
+  // Helper: Euclidean distance (face-api has it but redeclare for speed)
+  function euclideanDistance(desc1, desc2){
+    let sum = 0;
+    for(let i=0; i<desc1.length; i++){
+      let diff = desc1[i] - desc2[i];
+      sum += diff*diff;
+    }
+    return Math.sqrt(sum);
+  }
+
+  // Main recognition loop throttled for smoother UI
+  async function recognizeLoop(){
+    if(video.paused || video.ended) return;
+
+    const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions())
+      .withFaceLandmarks()
+      .withFaceDescriptors();
+
+    // Clear canvas
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    for(let detection of detections){
+      const box = detection.detection.box;
+      const descriptor = detection.descriptor;
+
+      let matchedFace = null;
+      let bestDistance = DISTANCE_THRESHOLD;
+
+      for(let face of knownFaces){
+        const dist = euclideanDistance(face.descriptor, descriptor);
+        if(dist < bestDistance){
+          bestDistance = dist;
+          matchedFace = face;
+        }
+      }
+
+      let drawName, drawColor;
+
+      if(matchedFace){
+        drawName = matchedFace.name;
+        drawColor = 'green';
+      } else {
+        drawName = `ticket${nextTicketId}`;
+        drawColor = 'red';
+
+        if(!isSaving){
+          isSaving = true;
+          statusEl.textContent = `Saving new face as ${drawName}...`;
+
+          // Save to Firebase
+          try {
+            const newId = db.ref().child('faces').push().key;
+            await db.ref('faces/' + newId).set({
+              name: drawName,
+              encoding: Array.from(descriptor),
+              timestamp: new Date().toISOString()
+            });
+            knownFaces.push({id: newId, name: drawName, descriptor});
+            nextTicketId++;
+            updateFacesListUI();
+            statusEl.textContent = `Saved new face as ${drawName}`;
+          } catch(e) {
+            statusEl.textContent = "Error saving face: " + e.message;
+          }
+          isSaving = false;
+        }
+      }
+
+      // Draw box and label
+      ctx.strokeStyle = drawColor;
+      ctx.lineWidth = 3;
+      ctx.strokeRect(box.x, box.y, box.width, box.height);
+
+      ctx.fillStyle = drawColor;
+      ctx.font = "20px Arial";
+      ctx.fillText(drawName, box.x + 5, box.y + 25);
+    }
+
+    requestAnimationFrame(recognizeLoop);
+  }
+
+  recognizeLoop();
+})();
+</script>
+
+</body>
+</html>
