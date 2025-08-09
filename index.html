@@ -3,107 +3,104 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Auto Face Capture & Save</title>
+<title>Auto Face Capture with Firebase</title>
 <style>
-  body {
-    font-family: Arial, sans-serif;
-    text-align: center;
-    background: #f5f5f5;
-    padding: 20px;
-  }
-  video, canvas {
-    border: 2px solid #333;
-    border-radius: 10px;
-    margin-top: 10px;
-  }
-  #status {
-    font-weight: bold;
-    margin-top: 10px;
-    color: green;
-  }
+  body { font-family: Arial, sans-serif; text-align: center; background: #f5f5f5; }
+  h1 { margin-top: 20px; }
+  video, canvas { border: 2px solid #333; margin-top: 10px; }
+  #status { margin-top: 15px; font-weight: bold; color: green; }
 </style>
 </head>
 <body>
 
-<h2>Auto Face Capture & Save to Firebase</h2>
+<h1>Auto Face Capture & Save</h1>
 <video id="video" width="320" height="240" autoplay muted></video>
 <canvas id="canvas" width="320" height="240" style="display:none;"></canvas>
-<div id="status">Loading models...</div>
+<p id="status">Loading models...</p>
 
-<!-- Face API -->
-<script defer src="https://cdn.jsdelivr.net/npm/face-api.js"></script>
+<!-- face-api.js -->
+<script defer src="https://unpkg.com/face-api.js"></script>
 
 <!-- Firebase -->
 <script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js";
-import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-storage.js";
-import { getDatabase, ref, get, set } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-database.js";
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js";
+  import { getDatabase, ref, get, set } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-database.js";
+  import { getStorage, ref as sRef, uploadString, getDownloadURL } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-storage.js";
 
-const firebaseConfig = {
-  apiKey: "AIzaSyDsn16p7w8b-x8pEA_WTO5F2oUk4MHwcUc",
-  authDomain: "wavetravel-3c4c4.firebaseapp.com",
-  databaseURL: "https://wavetravel-3c4c4-default-rtdb.firebaseio.com",
-  projectId: "wavetravel-3c4c4",
-  storageBucket: "wavetravel-3c4c4.appspot.com",
-  messagingSenderId: "298226098137",
-  appId: "1:298226098137:web:720953b80e3e61c8bc43c8"
-};
+  const firebaseConfig = {
+    apiKey: "AIzaSyDsn16p7w8b-x8pEA_WTO5F2oUk4MHwcUc",
+    authDomain: "wavetravel-3c4c4.firebaseapp.com",
+    databaseURL: "https://wavetravel-3c4c4-default-rtdb.firebaseio.com",
+    projectId: "wavetravel-3c4c4",
+    storageBucket: "wavetravel-3c4c4.appspot.com",
+    messagingSenderId: "298226098137",
+    appId: "1:298226098137:web:720953b80e3e61c8bc43c8"
+  };
 
-// Init Firebase
-const app = initializeApp(firebaseConfig);
-const storage = getStorage(app);
-const db = getDatabase(app);
+  const app = initializeApp(firebaseConfig);
+  const db = getDatabase(app);
+  const storage = getStorage(app);
 
-// HTML Elements
-const video = document.getElementById('video');
-const canvas = document.getElementById('canvas');
-const statusDiv = document.getElementById('status');
+  const video = document.getElementById('video');
+  const canvas = document.getElementById('canvas');
+  const statusEl = document.getElementById('status');
+  let capturing = false;
 
-// Load face-api models
-Promise.all([
-  faceapi.nets.tinyFaceDetector.loadFromUri('https://cdn.jsdelivr.net/npm/face-api.js/weights'),
-]).then(startVideo);
-
-function startVideo() {
+  // Start webcam
   navigator.mediaDevices.getUserMedia({ video: true })
-    .then(stream => { video.srcObject = stream; })
-    .catch(err => { console.error(err); });
-}
+    .then(stream => video.srcObject = stream)
+    .catch(err => console.error(err));
 
-// Get next ticket name
-async function getNextTicketName() {
-  const snapshot = await get(ref(db, "lastTicketNumber"));
-  let number = snapshot.exists() ? snapshot.val() + 1 : 101;
-  await set(ref(db, "lastTicketNumber"), number);
-  return "ticket" + number;
-}
+  // Load face-api.js models
+  Promise.all([
+    faceapi.nets.tinyFaceDetector.loadFromUri('https://justadudewhohacks.github.io/face-api.js/models'),
+  ]).then(startDetection);
 
-// Detect face and capture
-video.addEventListener('playing', async () => {
-  statusDiv.innerText = "Detecting face...";
-  const displaySize = { width: video.width, height: video.height };
-  setInterval(async () => {
-    const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions());
-    if (detections.length > 0) {
-      statusDiv.innerText = "Face detected! Capturing...";
-      captureAndSave();
-    }
-  }, 1000);
-});
+  function startDetection() {
+    statusEl.textContent = "Detecting face...";
+    video.addEventListener('play', () => {
+      const interval = setInterval(async () => {
+        const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions());
+        if (detections.length > 0 && !capturing) {
+          capturing = true;
+          statusEl.textContent = "Face detected! Capturing...";
+          captureAndSave();
+        }
+      }, 500);
+    });
+  }
 
-async function captureAndSave() {
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-  canvas.toBlob(async (blob) => {
-    const ticketName = await getNextTicketName();
-    const imgRef = storageRef(storage, `faces/${ticketName}.png`);
-    await uploadBytes(imgRef, blob);
-    const url = await getDownloadURL(imgRef);
-    await set(ref(db, `tickets/${ticketName}`), { imageUrl: url, createdAt: Date.now() });
-    statusDiv.innerText = `Saved as ${ticketName}`;
-  }, 'image/png');
-}
+  async function getNextTicketId() {
+    const snapshot = await get(ref(db, 'tickets'));
+    if (!snapshot.exists()) return 'ticket101';
+    const keys = Object.keys(snapshot.val());
+    const lastTicket = keys.sort((a,b) => {
+      const numA = parseInt(a.replace('ticket',''));
+      const numB = parseInt(b.replace('ticket',''));
+      return numB - numA;
+    })[0];
+    const nextNum = parseInt(lastTicket.replace('ticket','')) + 1;
+    return 'ticket' + nextNum;
+  }
+
+  async function captureAndSave() {
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL('image/jpeg');
+
+    const ticketId = await getNextTicketId();
+    const imgRef = sRef(storage, `faces/${ticketId}.jpg`);
+    
+    await uploadString(imgRef, dataUrl, 'data_url');
+    const downloadURL = await getDownloadURL(imgRef);
+
+    await set(ref(db, `tickets/${ticketId}`), {
+      imageUrl: downloadURL,
+      timestamp: Date.now()
+    });
+
+    statusEl.textContent = `Saved as ${ticketId}`;
+  }
 </script>
-
 </body>
 </html>
