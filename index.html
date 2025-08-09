@@ -28,6 +28,7 @@
     const video = document.getElementById('videoInput');
     const canvas = document.getElementById('overlay');
     const ctx = canvas.getContext('2d');
+
     const startBtn = document.getElementById('startBtn');
     const captureBtn = document.getElementById('captureBtn');
     const messageDiv = document.getElementById('message');
@@ -35,10 +36,16 @@
     let knownDescriptors = [];
     let knownLabels = [];
     let nextId = 100;
+    let detecting = false;
 
-    // Helper to convert Float32Array to array for Firebase
+    // Helper: convert Float32Array to normal array for Firebase saving
     function descriptorToArray(descriptor) {
       return Array.from(descriptor);
+    }
+
+    // Helper: convert array from Firebase back to Float32Array
+    function arrayToDescriptor(arr) {
+      return new Float32Array(arr);
     }
 
     // Load known faces from Firebase
@@ -47,135 +54,149 @@
       const snapshot = await get(facesRef);
       knownDescriptors = [];
       knownLabels = [];
-      nextId = 100;
+      nextId = 100; // reset to 100 or find max ID from data
 
       if (snapshot.exists()) {
         const data = snapshot.val();
         for (const [id, face] of Object.entries(data)) {
           if (face.encoding && face.name) {
-            knownDescriptors.push(new Float32Array(face.encoding));
+            knownDescriptors.push(arrayToDescriptor(face.encoding));
             knownLabels.push(face.name);
             const numericId = parseInt(id, 10);
             if (!isNaN(numericId) && numericId >= nextId) nextId = numericId + 1;
           }
         }
       }
-      console.log(`Loaded ${knownLabels.length} known faces. Next ID: ${nextId}`);
+      console.log(`Loaded ${knownLabels.length} faces. Next ID: ${nextId}`);
     }
 
-    // Save captured face descriptor to Firebase
+    // Save face + name + age + height to Firebase
     async function saveFace(descriptor) {
       const id = nextId++;
-      const name = `ticket${id - 99}`;
+      const nameInput = document.getElementById('inputName').value.trim();
+      const ageInput = parseInt(document.getElementById('inputAge').value);
+      const heightInput = parseInt(document.getElementById('inputHeight').value);
+
+      if (!nameInput) {
+        messageDiv.innerText = "Please enter a name.";
+        nextId--; // revert ID increment since not saving
+        return;
+      }
+      if (!ageInput || ageInput < 1 || ageInput > 120) {
+        messageDiv.innerText = "Please enter a valid age (1-120).";
+        nextId--;
+        return;
+      }
+      if (!heightInput || heightInput < 30 || heightInput > 300) {
+        messageDiv.innerText = "Please enter a valid height in cm (30-300).";
+        nextId--;
+        return;
+      }
+
       const faceRef = ref(db, `faces/${id}`);
       await set(faceRef, {
-        name,
+        name: nameInput,
+        age: ageInput,
+        height: heightInput,
         encoding: descriptorToArray(descriptor),
         timestamp: new Date().toISOString()
       });
+
       knownDescriptors.push(descriptor);
-      knownLabels.push(name);
-      messageDiv.innerText = `Saved face as ${name}`;
-      console.log(`Saved face ${name} with ID ${id}`);
+      knownLabels.push(nameInput);
+
+      messageDiv.innerText = `Saved face data for ${nameInput}`;
+      console.log(`Saved face for ${nameInput} with ID ${id}`);
     }
 
-    // Start camera and load models
-    async function startCamera() {
+    async function setup() {
       messageDiv.innerText = "Loading models...";
       await Promise.all([
         faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
         faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
         faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
       ]);
-      messageDiv.innerText = "Models loaded. Loading known faces...";
+      messageDiv.innerText = "Models loaded.";
+
       await loadKnownFaces();
 
+      startBtn.disabled = false;
+      captureBtn.disabled = true;
+    }
+
+    async function startCamera() {
+      messageDiv.innerText = "Starting camera...";
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: {} });
         video.srcObject = stream;
         await video.play();
-
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
-
-        messageDiv.innerText = "Camera started. You can capture face now.";
+        messageDiv.innerText = "Camera started. Face the camera and click Capture Face.";
         captureBtn.disabled = false;
         startBtn.disabled = true;
-
-        detectLoop();
+        detecting = true;
+        recognizeLoop();
       } catch (err) {
-        console.error("Camera error:", err);
-        messageDiv.innerText = "Camera error: " + err.message;
+        messageDiv.innerText = "Failed to start camera: " + err.message;
+        console.error(err);
       }
     }
 
-    // Continuous detection loop to draw boxes
-    async function detectLoop() {
-      if (video.paused || video.ended) return;
+    async function recognizeLoop() {
+      if (!detecting) return;
 
-      const detections = await faceapi.detectAllFaces(
-        video,
-        new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 })
-      )
-      .withFaceLandmarks()
-      .withFaceDescriptors();
+      // Detect faces with tinyFaceDetector for speed
+      const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions())
+        .withFaceLandmarks()
+        .withFaceDescriptors();
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      console.log(`Faces detected: ${detections.length}`);
+      if (detections.length === 0) {
+        messageDiv.innerText = "No face detected. Please make sure your face is visible.";
+      } else {
+        messageDiv.innerText = "Face detected. You can capture now.";
+      }
 
-      detections.forEach(detection => {
+      for (const detection of detections) {
         const box = detection.detection.box;
-        ctx.strokeStyle = 'blue';
+
+        ctx.strokeStyle = "blue";
         ctx.lineWidth = 2;
         ctx.strokeRect(box.x, box.y, box.width, box.height);
-      });
+      }
 
-      requestAnimationFrame(detectLoop);
+      requestAnimationFrame(recognizeLoop);
     }
 
-    // Capture button handler
+    // Capture face button click
     captureBtn.onclick = async () => {
-      if (video.paused || video.ended) {
-        messageDiv.innerText = "Start the camera first.";
+      const detections = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
+        .withFaceLandmarks()
+        .withFaceDescriptor();
+
+      if (!detections) {
+        messageDiv.innerText = "No face detected to capture. Please try again.";
         return;
       }
 
-      // Detect faces once
-      const detections = await faceapi.detectAllFaces(
-        video,
-        new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 })
-      )
-      .withFaceLandmarks()
-      .withFaceDescriptors();
-
-      if (detections.length === 0) {
-        messageDiv.innerText = "No face detected. Please try again.";
-        return;
-      }
-
-      // Take first face descriptor only
-      const descriptor = detections[0].descriptor;
-
-      // Save face to Firebase
-      messageDiv.innerText = "Saving face...";
-      await saveFace(descriptor);
+      await saveFace(detections.descriptor);
     };
 
     startBtn.onclick = startCamera;
 
-    // Initially disable capture button
-    captureBtn.disabled = true;
+    setup();
   </script>
   <style>
     body {
       margin: 0;
       padding: 0;
+      overflow: hidden;
+      text-align: center;
       background: #222;
       color: white;
       font-family: Arial, sans-serif;
-      text-align: center;
-      overflow: hidden;
     }
     #videoInput {
       position: absolute;
@@ -183,7 +204,7 @@
       width: 100vw;
       height: 100vh;
       object-fit: cover;
-      transform: scaleX(-1);
+      transform: scaleX(-1); /* mirror */
     }
     #overlay {
       position: absolute;
@@ -198,45 +219,55 @@
       top: 10px;
       left: 50%;
       transform: translateX(-50%);
-      z-index: 1000;
-      background: rgba(0,0,0,0.5);
-      padding: 10px 20px;
+      background: rgba(0,0,0,0.6);
+      padding: 15px;
       border-radius: 8px;
+      z-index: 1000;
     }
-    button {
-      margin: 0 10px;
-      font-size: 16px;
-      padding: 8px 16px;
+    #controls input {
+      font-size: 14px;
+      padding: 6px 8px;
+      margin: 5px 6px 0 0;
+      width: 120px;
+      border-radius: 4px;
       border: none;
-      border-radius: 5px;
+      outline: none;
+    }
+    #controls button {
+      font-size: 14px;
+      padding: 7px 12px;
+      margin: 10px 6px 0 0;
+      border-radius: 4px;
+      border: none;
       cursor: pointer;
+      background-color: #06c;
+      color: white;
+      transition: background-color 0.3s ease;
     }
-    button:disabled {
-      background: #555;
+    #controls button:disabled {
+      background-color: #444;
       cursor: not-allowed;
-    }
-    #startBtn {
-      background: #28a745;
-      color: white;
-    }
-    #captureBtn {
-      background: #007bff;
-      color: white;
     }
     #message {
       margin-top: 10px;
       font-weight: bold;
-      color: #ffc107;
+      color: #ffcc00;
+      min-height: 20px;
     }
   </style>
 </head>
 <body>
+  <video id="videoInput" autoplay muted></video>
+  <canvas id="overlay"></canvas>
+
   <div id="controls">
-    <button id="startBtn">Start Camera</button>
+    <input type="text" id="inputName" placeholder="Name" />
+    <input type="number" id="inputAge" placeholder="Age" min="1" max="120" />
+    <input type="number" id="inputHeight" placeholder="Height (cm)" min="30" max="300" />
+    <br />
+    <button id="startBtn" disabled>Start Camera</button>
     <button id="captureBtn" disabled>Capture Face</button>
     <div id="message"></div>
   </div>
-  <video id="videoInput" autoplay muted></video>
-  <canvas id="overlay"></canvas>
 </body>
 </html>
