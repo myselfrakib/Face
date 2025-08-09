@@ -2,92 +2,70 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Face Recognition with Firebase</title>
-  <style>
-    video { border: 1px solid black; }
-    canvas { position: absolute; top: 0; left: 0; }
-  </style>
+  <title>Face Encoding to Firebase</title>
+  <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.min.js"></script>
 </head>
 <body>
-  <h1>Face Recognition with Firebase</h1>
-  <video id="video" width="720" height="560" autoplay muted></video>
+  <h2>Face Recognition Data Capture</h2>
+  <video id="video" width="320" height="240" autoplay muted></video>
+  <br>
+  <button id="captureBtn">Capture Face Data</button>
 
-  <!-- Face API.js for browser -->
-  <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
-
-  <!-- Firebase -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js";
     import { getDatabase, ref, set } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-database.js";
-    import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-storage.js";
 
+    // Firebase Config
     const firebaseConfig = {
       apiKey: "AIzaSyDsn16p7w8b-x8pEA_WTO5F2oUk4MHwcUc",
       authDomain: "wavetravel-3c4c4.firebaseapp.com",
       databaseURL: "https://wavetravel-3c4c4-default-rtdb.firebaseio.com",
       projectId: "wavetravel-3c4c4",
-      storageBucket: "wavetravel-3c4c4.appspot.com",
+      storageBucket: "wavetravel-3c4c4.firebasestorage.app",
       messagingSenderId: "298226098137",
       appId: "1:298226098137:web:720953b80e3e61c8bc43c8"
     };
 
+    // Init Firebase
     const app = initializeApp(firebaseConfig);
     const db = getDatabase(app);
-    const storage = getStorage(app);
 
-    async function startFaceRecognition() {
-      await faceapi.nets.tinyFaceDetector.loadFromUri('/models');
-      await faceapi.nets.faceLandmark68Net.loadFromUri('/models');
-      await faceapi.nets.faceRecognitionNet.loadFromUri('/models');
+    // Start camera
+    const video = document.getElementById('video');
+    navigator.mediaDevices.getUserMedia({ video: true })
+      .then(stream => video.srcObject = stream);
 
-      const video = document.getElementById('video');
+    // Load models
+    Promise.all([
+      faceapi.nets.tinyFaceDetector.loadFromUri('/models'),
+      faceapi.nets.faceLandmark68Net.loadFromUri('/models'),
+      faceapi.nets.faceRecognitionNet.loadFromUri('/models')
+    ]).then(() => {
+      console.log("Face-api.js models loaded");
+    });
 
-      navigator.mediaDevices.getUserMedia({ video: {} })
-        .then(stream => video.srcObject = stream);
+    // Capture button
+    document.getElementById("captureBtn").addEventListener("click", async () => {
+      const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
+        .withFaceLandmarks()
+        .withFaceDescriptor();
 
-      video.addEventListener('play', async () => {
-        const canvas = faceapi.createCanvasFromMedia(video);
-        document.body.append(canvas);
-        const displaySize = { width: video.width, height: video.height };
-        faceapi.matchDimensions(canvas, displaySize);
+      if (!detection) {
+        alert("No face detected. Please try again.");
+        return;
+      }
 
-        setInterval(async () => {
-          const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions())
-            .withFaceLandmarks()
-            .withFaceDescriptors();
-          const resizedDetections = faceapi.resizeResults(detections, displaySize);
-          canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
-          faceapi.draw.drawDetections(canvas, resizedDetections);
+      // Get descriptor and convert to array
+      const descriptorArray = Array.from(detection.descriptor);
 
-          if (detections.length > 0) {
-            // Save snapshot to Firebase
-            const snapshot = await captureImage(video);
-            const imageRef = storageRef(storage, 'faces/' + Date.now() + '.png');
-            const uploadResult = await uploadBytes(imageRef, snapshot);
-            const downloadURL = await getDownloadURL(imageRef);
-
-            await set(ref(db, 'faceCaptures/' + Date.now()), {
-              imageUrl: downloadURL,
-              timestamp: Date.now()
-            });
-            console.log('Face snapshot saved to Firebase:', downloadURL);
-          }
-        }, 3000);
+      // Save to Firebase (replace with your userId/bookingId)
+      const bookingId = "BOOKING123";
+      await set(ref(db, `faceEncodings/${bookingId}`), {
+        encoding: descriptorArray
       });
-    }
 
-    function captureImage(video) {
-      return new Promise(resolve => {
-        const canvas = document.createElement('canvas');
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(video, 0, 0);
-        canvas.toBlob(blob => resolve(blob), 'image/png');
-      });
-    }
-
-    startFaceRecognition();
+      alert("Face encoding saved successfully!");
+    });
   </script>
 </body>
 </html>
