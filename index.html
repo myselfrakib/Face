@@ -1,32 +1,38 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html>
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Auto Face Capture with Firebase</title>
-<style>
-  body { font-family: Arial, sans-serif; text-align: center; background: #f5f5f5; }
-  h1 { margin-top: 20px; }
-  video, canvas { border: 2px solid #333; margin-top: 10px; }
-  #status { margin-top: 15px; font-weight: bold; color: green; }
-</style>
+  <meta charset="utf-8" />
+  <title>Auto Face Detect → Auto Save (face-api.js + Firebase)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body { margin:0; font-family: Arial,Helvetica,sans-serif; background:#111; color:#eee; display:flex; flex-direction:column; align-items:center; }
+    h1 { margin:16px 0 6px; font-size:18px; }
+    #container { position:relative; width:640px; height:480px; }
+    video { width:100%; height:100%; object-fit:cover; transform:scaleX(-1); border-radius:8px; }
+    canvas { position:absolute; left:0; top:0; pointer-events:none; width:100%; height:100%; }
+    #status { margin:10px 0 24px; color:#9f9; }
+    #hud { position:fixed; right:10px; bottom:10px; color:#ccc; font-size:13px; background:rgba(0,0,0,0.35); padding:8px; border-radius:6px; }
+  </style>
 </head>
 <body>
+  <h1>Auto Face Detect & Auto Save (ticket system)</h1>
+  <div id="container">
+    <video id="video" autoplay muted playsinline></video>
+    <canvas id="overlay" width="640" height="480"></canvas>
+  </div>
+  <div id="status">Loading models & Firebase...</div>
+  <div id="hud">Ready</div>
 
-<h1>Auto Face Capture & Save</h1>
-<video id="video" width="320" height="240" autoplay muted></video>
-<canvas id="canvas" width="320" height="240" style="display:none;"></canvas>
-<p id="status">Loading models...</p>
+  <!-- face-api (global `faceapi`) -->
+  <script defer src="https://cdn.jsdelivr.net/npm/face-api.js"></script>
 
-<!-- face-api.js -->
-<script defer src="https://unpkg.com/face-api.js"></script>
-
-<!-- Firebase -->
-<script type="module">
+  <!-- main logic (module so we can import Firebase modular SDK) -->
+  <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js";
-  import { getDatabase, ref, get, set } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-database.js";
-  import { getStorage, ref as sRef, uploadString, getDownloadURL } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-storage.js";
+  import { getDatabase, ref, get, set, runTransaction } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-database.js";
+  import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-storage.js";
 
+  // ====== CONFIG: replace with your Firebase config if needed ======
   const firebaseConfig = {
     apiKey: "AIzaSyDsn16p7w8b-x8pEA_WTO5F2oUk4MHwcUc",
     authDomain: "wavetravel-3c4c4.firebaseapp.com",
@@ -37,70 +43,308 @@
     appId: "1:298226098137:web:720953b80e3e61c8bc43c8"
   };
 
+  // models folder in your GitHub repo (you already uploaded)
+  const MODEL_URL = "https://raw.githubusercontent.com/myselfrakib/Face/main/models";
+
+  // detection / behavior params
+  const CROP_FRAC = 0.6;           // fraction of width/height to use (middle box)
+  const MATCH_THRESHOLD = 0.55;    // lower => stricter
+  const UNKNOWN_PERSIST_MS = 3000; // must be present continuously for 3s to save
+  const PROCESS_EVERY_N = 2;       // process every Nth animation frame (speed tweak)
+
+  // ====== DOM ======
+  const statusEl = document.getElementById('status');
+  const hud = document.getElementById('hud');
+  const video = document.getElementById('video');
+  const overlay = document.getElementById('overlay');
+  const ctx = overlay.getContext('2d');
+
+  // ====== Firebase init ======
   const app = initializeApp(firebaseConfig);
   const db = getDatabase(app);
   const storage = getStorage(app);
 
-  const video = document.getElementById('video');
-  const canvas = document.getElementById('canvas');
-  const statusEl = document.getElementById('status');
-  let capturing = false;
+  // ====== in-memory matcher state ======
+  let labeledDescriptors = []; // array of faceapi.LabeledFaceDescriptors
+  let faceMatcher = null;
+  let processingCounter = 0;
 
-  // Start webcam
-  navigator.mediaDevices.getUserMedia({ video: true })
-    .then(stream => video.srcObject = stream)
-    .catch(err => console.error(err));
+  // unknown tracking
+  let unknown = null;
+  // unknown = { descriptor: Float32Array, firstSeen: tms, lastSeen: tms, box: {...} }
 
-  // Load face-api.js models
-  Promise.all([
-    faceapi.nets.tinyFaceDetector.loadFromUri('https://justadudewhohacks.github.io/face-api.js/models'),
-  ]).then(startDetection);
-
-  function startDetection() {
-    statusEl.textContent = "Detecting face...";
-    video.addEventListener('play', () => {
-      const interval = setInterval(async () => {
-        const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions());
-        if (detections.length > 0 && !capturing) {
-          capturing = true;
-          statusEl.textContent = "Face detected! Capturing...";
-          captureAndSave();
+  // helper: load known faces from DB
+  async function loadKnownFacesFromDB() {
+    labeledDescriptors = [];
+    try {
+      const snap = await get(ref(db, '/face'));
+      const data = snap.exists() ? snap.val() : {};
+      for (const key of Object.keys(data)) {
+        const item = data[key];
+        if (!item) continue;
+        const descs = [];
+        if (Array.isArray(item.descriptors)) {
+          for (const d of item.descriptors) {
+            // ensure length 128
+            if (Array.isArray(d) && d.length >= 128) descs.push(new Float32Array(d.slice(0,128)));
+          }
+        } else if (item.descriptor && Array.isArray(item.descriptor)) {
+          // legacy single descriptor
+          descs.push(new Float32Array(item.descriptor.slice(0,128)));
         }
-      }, 500);
+        if (descs.length > 0) {
+          labeledDescriptors.push(new faceapi.LabeledFaceDescriptors(key, descs));
+        }
+      }
+      faceMatcher = labeledDescriptors.length ? new faceapi.FaceMatcher(labeledDescriptors, MATCH_THRESHOLD) : null;
+      statusEl.innerText = `Loaded ${labeledDescriptors.length} known faces.`;
+    } catch (err) {
+      console.error("Error loading faces:", err);
+      statusEl.innerText = "Error loading known faces.";
+    }
+  }
+
+  // atomically get next ticket number using transaction; starts at 101
+  async function allocateNextTicket() {
+    const ticketRef = ref(db, 'lastTicketNumber');
+    const res = await runTransaction(ticketRef, (cur) => {
+      if (cur === null || cur === undefined) return 101;
+      return cur + 1;
     });
+    if (!res.committed) throw new Error("Transaction failed");
+    return res.snapshot.val(); // number (101,102,...)
   }
 
-  async function getNextTicketId() {
-    const snapshot = await get(ref(db, 'tickets'));
-    if (!snapshot.exists()) return 'ticket101';
-    const keys = Object.keys(snapshot.val());
-    const lastTicket = keys.sort((a,b) => {
-      const numA = parseInt(a.replace('ticket',''));
-      const numB = parseInt(b.replace('ticket',''));
-      return numB - numA;
-    })[0];
-    const nextNum = parseInt(lastTicket.replace('ticket','')) + 1;
-    return 'ticket' + nextNum;
+  // save captured face: upload image to storage, store descriptors to DB under /face/ticketNNN
+  async function saveFaceToFirebase(descriptorFloat32, imageBlob) {
+    try {
+      const number = await allocateNextTicket();
+      const ticketName = `ticket${number}`;
+      const storagePath = `faces/${ticketName}.jpg`;
+      const sRef = storageRef(storage, storagePath);
+
+      await uploadBytes(sRef, imageBlob);
+      const imageUrl = await getDownloadURL(sRef);
+
+      // descriptors stored as arrays
+      const descArray = Array.from(descriptorFloat32);
+
+      await set(ref(db, `/face/${ticketName}`), {
+        descriptors: [descArray],
+        imageUrl,
+        timestamp: Date.now()
+      });
+
+      // update in-memory matcher with new label
+      const newLabel = new faceapi.LabeledFaceDescriptors(ticketName, [descriptorFloat32]);
+      labeledDescriptors.push(newLabel);
+      faceMatcher = new faceapi.FaceMatcher(labeledDescriptors, MATCH_THRESHOLD);
+
+      statusEl.innerText = `Saved ${ticketName}`;
+      console.log("Saved", ticketName, imageUrl);
+      return ticketName;
+    } catch (err) {
+      console.error("Save failed:", err);
+      statusEl.innerText = "Save failed";
+      throw err;
+    }
   }
 
-  async function captureAndSave() {
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const dataUrl = canvas.toDataURL('image/jpeg');
-
-    const ticketId = await getNextTicketId();
-    const imgRef = sRef(storage, `faces/${ticketId}.jpg`);
-    
-    await uploadString(imgRef, dataUrl, 'data_url');
-    const downloadURL = await getDownloadURL(imgRef);
-
-    await set(ref(db, `tickets/${ticketId}`), {
-      imageUrl: downloadURL,
-      timestamp: Date.now()
-    });
-
-    statusEl.textContent = `Saved as ${ticketId}`;
+  // draw box and label; because video is mirrored via CSS transform scaleX(-1),
+  // we must flip x coordinates when drawing on overlay (which is not mirrored).
+  function drawBoxOnOverlay(box, label, color) {
+    // box: {x, y, width, height} relative to overlay canvas coordinate
+    const cw = overlay.width;
+    const drawX = cw - (box.x + box.width); // flip horizontally
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.rect(drawX, box.y, box.width, box.height);
+    ctx.stroke();
+    // label background
+    ctx.fillRect(drawX, box.y + box.height - 22, box.width, 22);
+    ctx.fillStyle = "#000";
+    ctx.font = "16px Arial";
+    ctx.fillText(label, drawX + 6, box.y + box.height - 6);
   }
-</script>
+
+  // capture current video frame (full) as blob and also crop center area for save
+  function captureFrameBlob() {
+    const w = video.videoWidth;
+    const h = video.videoHeight;
+    // we want to capture the center crop area (same area we detect on)
+    const cropW = Math.floor(w * CROP_FRAC);
+    const cropH = Math.floor(h * CROP_FRAC);
+    const sx = Math.floor((w - cropW) / 2);
+    const sy = Math.floor((h - cropH) / 2);
+
+    const off = document.createElement('canvas');
+    off.width = cropW;
+    off.height = cropH;
+    const octx = off.getContext('2d');
+    // video is mirrored visually using CSS; draw normal video frame (unmirrored)
+    octx.drawImage(video, sx, sy, cropW, cropH, 0, 0, cropW, cropH);
+    return new Promise(resolve => off.toBlob(resolve, 'image/jpeg'));
+  }
+
+  // main loop
+  async function run() {
+    // load models from your GitHub repo
+    statusEl.innerText = "Loading models from GitHub...";
+    await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+    await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL);
+    await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
+    // optional: age/gender/expression models are also available in your models folder
+    try { await faceapi.nets.ageGenderNet.loadFromUri(MODEL_URL); } catch {}
+    try { await faceapi.nets.faceExpressionNet.loadFromUri(MODEL_URL); } catch {}
+
+    statusEl.innerText = "Loading known faces from Firebase...";
+    await loadKnownFacesFromDB();
+
+    // start camera
+    statusEl.innerText = "Starting camera...";
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { width:640, height:480 } });
+    video.srcObject = stream;
+    await video.play();
+
+    // sync canvas resolution
+    overlay.width = video.videoWidth;
+    overlay.height = video.videoHeight;
+
+    statusEl.innerText = "Running...";
+
+    // center crop coords in video coordinates
+    const cropW = Math.floor(video.videoWidth * CROP_FRAC);
+    const cropH = Math.floor(video.videoHeight * CROP_FRAC);
+    const cropX = Math.floor((video.videoWidth - cropW) / 2);
+    const cropY = Math.floor((video.videoHeight - cropH) / 2);
+
+    // offscreen canvas to run detection on the crop area (speed + stable)
+    const off = document.createElement('canvas');
+    off.width = cropW;
+    off.height = cropH;
+    const offctx = off.getContext('2d');
+
+    let rafCount = 0;
+    async function frameLoop() {
+      rafCount++;
+      requestAnimationFrame(frameLoop);
+
+      // process every Nth frame to save CPU
+      if ((rafCount % PROCESS_EVERY_N) !== 0) return;
+
+      // draw cropped center into offscreen canvas
+      // note: drawImage reads the actual frame (not mirrored CSS),
+      // but video element is visually mirrored by CSS only. That's fine because coords are relative to frame.
+      offctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+
+      // run detection on the cropped area
+      const detections = await faceapi.detectAllFaces(off, new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.5 }))
+        .withFaceLandmarks()
+        .withFaceDescriptors();
+
+      // clear overlay
+      ctx.clearRect(0,0,overlay.width, overlay.height);
+
+      if (!detections || detections.length === 0) {
+        hud.innerText = `Known: ${labeledDescriptors.length}  —  No face`;
+        // reset unknown tracking if face disappears
+        if (unknown && (Date.now() - unknown.lastSeen) > 2000) unknown = null;
+        return;
+      }
+
+      // draw the crop rectangle (for user awareness) — transform to overlay coords
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+      ctx.strokeRect(cropX, cropY, cropW, cropH);
+
+      // process each detection
+      for (const det of detections) {
+        // detector gives box relative to offscreen crop; transform to overlay coords
+        const b = det.detection.box;
+        // overlay box in full video coords = crop offset + b
+        const boxFull = { x: cropX + b.x, y: cropY + b.y, width: b.width, height: b.height };
+
+        // decide match
+        let bestMatchLabel = "unknown";
+        if (faceMatcher) {
+          const best = faceMatcher.findBestMatch(det.descriptor);
+          bestMatchLabel = best.label; // either ticketNNN or "unknown"
+        }
+
+        if (bestMatchLabel !== "unknown") {
+          // matched — green box with name
+          drawBoxOnOverlay(boxFull, String(bestMatchLabel), "lime");
+          // reset unknown tracker
+          unknown = null;
+        } else {
+          // unknown — red. implement persistence logic
+          const now = Date.now();
+          if (!unknown) {
+            unknown = {
+              descriptor: det.descriptor.slice(), // copy
+              firstSeen: now,
+              lastSeen: now,
+              box: boxFull
+            };
+          } else {
+            // compute distance to existing unknown descriptor to ensure it's same face
+            const d = faceapi.euclideanDistance(unknown.descriptor, det.descriptor);
+            if (d < 0.6) {
+              unknown.lastSeen = now;
+              unknown.box = boxFull;
+            } else {
+              // new unknown face — reset timer
+              unknown = {
+                descriptor: det.descriptor.slice(),
+                firstSeen: now,
+                lastSeen: now,
+                box: boxFull
+              };
+            }
+          }
+
+          // draw red box
+          drawBoxOnOverlay(boxFull, "Unknown", "red");
+
+          // if seen continuously for >= UNKNOWN_PERSIST_MS -> capture & save
+          if (unknown && (unknown.lastSeen - unknown.firstSeen) >= UNKNOWN_PERSIST_MS) {
+            hud.innerText = "Saving unknown face...";
+            try {
+              // capture the crop area image blob
+              const imgBlob = await new Promise(resolve => off.toBlob(resolve, 'image/jpeg'));
+              // descriptor is a Float32Array already
+              const label = await saveFaceToFirebase(new Float32Array(det.descriptor), imgBlob);
+              // give immediate feedback (green)
+              drawBoxOnOverlay(unknown.box, label, "lime");
+              // reset unknown
+              unknown = null;
+            } catch (e) {
+              console.error("Save error:", e);
+              statusEl.innerText = "Save error (see console)";
+              unknown = null;
+            }
+          }
+        }
+      } // end for each detection
+
+      hud.innerText = `Known: ${labeledDescriptors.length}  —  Faces: ${detections.length}`;
+    } // frameLoop
+
+    requestAnimationFrame(frameLoop);
+  } // end run()
+
+  // ====== start everything ======
+  (async () => {
+    try {
+      await run();
+    } catch (err) {
+      console.error(err);
+      statusEl.innerText = "Fatal error (see console)";
+    }
+  })();
+
+  </script>
 </body>
 </html>
