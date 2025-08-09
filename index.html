@@ -1,185 +1,188 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Web Face Recognition with Firebase</title>
+  <meta charset="UTF-8" />
+  <title>Face Recognition with Firebase</title>
+  <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js";
+    import { getDatabase, ref, get, set, update } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-database.js";
 
-<style>
-  body { font-family: Arial, sans-serif; text-align: center; background: #222; color: #eee; }
-  #videoContainer { position: relative; display: inline-block; margin-top: 20px; }
-  video, canvas { border-radius: 10px; }
-  #videoElement { width: 720px; height: 560px; }
-  #status { margin-top: 10px; font-size: 1.2rem; }
-</style>
+    // ----------- Firebase config --------------
+    const firebaseConfig = {
+      apiKey: "AIzaSyDsn16p7w8b-x8pEA_WTO5F2oUk4MHwcUc",
+      authDomain: "wavetravel-3c4c4.firebaseapp.com",
+      databaseURL: "https://wavetravel-3c4c4-default-rtdb.firebaseio.com",
+      projectId: "wavetravel-3c4c4",
+      storageBucket: "wavetravel-3c4c4.appspot.com",
+      messagingSenderId: "298226098137",
+      appId: "1:298226098137:web:720953b80e3e61c8bc43c8"
+    };
 
-<!-- Firebase -->
-<script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js";
-  import { getDatabase, ref, get, set, push, child } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-database.js";
+    // Initialize Firebase
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
 
-  window.firebaseApp = initializeApp({
-    apiKey: "AIzaSyDsn16p7w8b-x8pEA_WTO5F2oUk4MHwcUc",
-    authDomain: "wavetravel-3c4c4.firebaseapp.com",
-    databaseURL: "https://wavetravel-3c4c4-default-rtdb.firebaseio.com",
-    projectId: "wavetravel-3c4c4",
-    storageBucket: "wavetravel-3c4c4.appspot.com",
-    messagingSenderId: "298226098137",
-    appId: "1:298226098137:web:720953b80e3e61c8bc43c8"
-  });
-  window.firebaseDB = getDatabase(window.firebaseApp);
-</script>
+    // ----------- Variables --------------
+    const MODEL_URL = 'https://raw.githubusercontent.com/myselfrakib/Face/main/models';
+    const video = document.getElementById('videoInput');
+    const canvas = document.getElementById('overlay');
+    const ctx = canvas.getContext('2d');
 
-<!-- face-api.js -->
-<script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
-
-</head>
-<body>
-
-<h1>Web Face Recognition with Firebase</h1>
-<div id="videoContainer">
-  <video id="videoElement" autoplay muted></video>
-  <canvas id="overlay" style="position:absolute; top:0; left:0;"></canvas>
-</div>
-<div id="status">Loading models...</div>
-
-<script type="module">
-  import { ref, get, set, push, child } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-database.js";
-
-  const video = document.getElementById('videoElement');
-  const canvas = document.getElementById('overlay');
-  const status = document.getElementById('status');
-  const ctx = canvas.getContext('2d');
-
-  const DB_FACES_REF = ref(window.firebaseDB, "faces");
-  let labeledDescriptors = [];
-  let faceMatcher;
-
-  // Load face-api models from CDN
-  async function loadModels() {
-    const MODEL_URL = 'https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/models';
-    await Promise.all([
-      faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
-      faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
-      faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
-      faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
-    ]);
-  }
-
-  // Load known faces from Firebase and prepare face matcher
-  async function loadKnownFaces() {
-    status.textContent = 'Loading known faces from Firebase...';
-    const snapshot = await get(DB_FACES_REF);
-    if (!snapshot.exists()) {
-      status.textContent = 'No known faces found.';
-      labeledDescriptors = [];
-      faceMatcher = null;
-      return;
-    }
-    const data = snapshot.val();
-    const labels = Object.keys(data);
-
-    labeledDescriptors = await Promise.all(labels.map(async (id) => {
-      const faceData = data[id];
-      // descriptor stored as array, convert to Float32Array
-      const descriptors = [new Float32Array(faceData.encoding)];
-      return new faceapi.LabeledFaceDescriptors(faceData.name, descriptors);
-    }));
-
-    faceMatcher = new faceapi.FaceMatcher(labeledDescriptors, 0.5);
-    status.textContent = `Loaded ${labeledDescriptors.length} known faces.`;
-  }
-
-  // Save unknown face to Firebase with incremental numeric ID and generated name "ticketX"
-  async function saveUnknownFace(descriptor) {
-    status.textContent = 'Saving unknown face to Firebase...';
-    const snapshot = await get(DB_FACES_REF);
-    const existingIds = snapshot.exists() ? Object.keys(snapshot.val()).map(id => parseInt(id)).filter(n => !isNaN(n)) : [];
+    let knownDescriptors = [];
+    let knownLabels = [];
     let nextId = 100;
-    if (existingIds.length > 0) {
-      nextId = Math.max(...existingIds) + 1;
+
+    // Helper: convert Float32Array to normal array for Firebase saving
+    function descriptorToArray(descriptor) {
+      return Array.from(descriptor);
     }
-    const ticketName = 'ticket' + (nextId - 99);
-    await set(child(DB_FACES_REF, String(nextId)), {
-      name: ticketName,
-      encoding: Array.from(descriptor),
-      timestamp: new Date().toISOString(),
-    });
-    status.textContent = `Saved unknown face as ${ticketName}`;
-    await loadKnownFaces(); // Reload known faces with new saved face
-  }
 
-  async function startVideo() {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: {} });
-      video.srcObject = stream;
-    } catch (err) {
-      status.textContent = 'Error accessing camera: ' + err.message;
+    // Helper: convert array from Firebase back to Float32Array
+    function arrayToDescriptor(arr) {
+      return new Float32Array(arr);
     }
-  }
 
-  async function onPlay() {
-    if(video.paused || video.ended) return setTimeout(() => onPlay());
+    // Load known faces from Firebase
+    async function loadKnownFaces() {
+      const facesRef = ref(db, 'faces');
+      const snapshot = await get(facesRef);
+      knownDescriptors = [];
+      knownLabels = [];
+      nextId = 100; // reset to 100 or you can find max ID from data
 
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-
-    const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions())
-      .withFaceLandmarks().withFaceDescriptors();
-
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    if (detections.length === 0) {
-      status.textContent = 'No faces detected';
-    } else {
-      for (const detection of detections) {
-        const box = detection.detection.box;
-        let label = 'Unknown';
-        let boxColor = 'red';
-
-        if (faceMatcher) {
-          const bestMatch = faceMatcher.findBestMatch(detection.descriptor);
-          label = bestMatch.toString();
-          if (!bestMatch.label.includes('unknown')) {
-            boxColor = 'lime';
-          }
-        }
-
-        ctx.strokeStyle = boxColor;
-        ctx.lineWidth = 3;
-        ctx.font = "18px Arial";
-        ctx.fillStyle = boxColor;
-
-        ctx.beginPath();
-        ctx.rect(box.x, box.y, box.width, box.height);
-        ctx.stroke();
-
-        ctx.fillText(label, box.x + 5, box.y > 20 ? box.y - 5 : box.y + 15);
-
-        if (label === 'unknown') {
-          // Auto-save unknown face, but limit frequency to once every 5 seconds
-          if (!window.lastSaved || (Date.now() - window.lastSaved) > 5000) {
-            window.lastSaved = Date.now();
-            await saveUnknownFace(detection.descriptor);
+      if (snapshot.exists()) {
+        const data = snapshot.val();
+        for (const [id, face] of Object.entries(data)) {
+          if (face.encoding && face.name) {
+            knownDescriptors.push(arrayToDescriptor(face.encoding));
+            knownLabels.push(face.name);
+            const numericId = parseInt(id, 10);
+            if (!isNaN(numericId) && numericId >= nextId) nextId = numericId + 1;
           }
         }
       }
-      status.textContent = `Detected ${detections.length} face(s).`;
+      console.log(`Loaded ${knownLabels.length} faces. Next ID: ${nextId}`);
     }
 
-    requestAnimationFrame(onPlay);
-  }
+    // Save unknown face to Firebase with generated ticket name
+    async function saveUnknownFace(descriptor) {
+      const id = nextId++;
+      const name = `ticket${id - 99}`; // ticket1 for id=100 etc.
+      const faceRef = ref(db, `faces/${id}`);
+      await set(faceRef, {
+        name,
+        encoding: descriptorToArray(descriptor),
+        timestamp: new Date().toISOString()
+      });
+      knownDescriptors.push(descriptor);
+      knownLabels.push(name);
+      console.log(`Saved new face as ${name} with ID ${id}`);
+      return name;
+    }
 
-  async function main() {
-    await loadModels();
-    await loadKnownFaces();
-    await startVideo();
-    video.addEventListener('play', onPlay);
-    status.textContent = 'Ready!';
-  }
+    async function setup() {
+      // Load models from your GitHub repo
+      await Promise.all([
+        faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+        faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+        faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
+      ]);
+      await loadKnownFaces();
 
-  main();
-</script>
+      // Start webcam
+      navigator.mediaDevices.getUserMedia({ video: {} })
+        .then(stream => {
+          video.srcObject = stream;
+          video.play();
+        })
+        .catch(err => {
+          console.error("Failed to access webcam:", err);
+        });
 
+      video.addEventListener('play', () => {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        recognizeLoop();
+      });
+    }
+
+    async function recognizeLoop() {
+      if (video.paused || video.ended) return;
+
+      // Detect faces with tinyFaceDetector for speed
+      const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions())
+        .withFaceLandmarks()
+        .withFaceDescriptors();
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      for (const detection of detections) {
+        const box = detection.detection.box;
+        const descriptor = detection.descriptor;
+
+        // Compare with known faces
+        let bestMatch = { distance: 1.0, label: "Unknown" };
+        for (let i = 0; i < knownDescriptors.length; i++) {
+          const dist = faceapi.euclideanDistance(descriptor, knownDescriptors[i]);
+          if (dist < bestMatch.distance) {
+            bestMatch = { distance: dist, label: knownLabels[i] };
+          }
+        }
+
+        // Threshold for matching
+        const threshold = 0.5;
+        let displayName = bestMatch.distance < threshold ? bestMatch.label : null;
+
+        if (!displayName) {
+          // Save unknown face
+          displayName = await saveUnknownFace(descriptor);
+        }
+
+        // Draw box and label
+        ctx.strokeStyle = displayName === "Unknown" ? "red" : "green";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(box.x, box.y, box.width, box.height);
+        ctx.fillStyle = ctx.strokeStyle;
+        ctx.font = "16px Arial";
+        ctx.fillText(displayName, box.x, box.y > 20 ? box.y - 5 : box.y + 15);
+      }
+
+      requestAnimationFrame(recognizeLoop);
+    }
+
+    setup();
+  </script>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      text-align: center;
+      background: #222;
+      color: white;
+      font-family: Arial, sans-serif;
+    }
+    #videoInput {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100vw;
+      height: 100vh;
+      object-fit: cover;
+      transform: scaleX(-1); /* mirror */
+    }
+    #overlay {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100vw;
+      height: 100vh;
+      pointer-events: none;
+      transform: scaleX(-1);
+    }
+  </style>
+</head>
+<body>
+  <video id="videoInput" autoplay muted></video>
+  <canvas id="overlay"></canvas>
 </body>
 </html>
