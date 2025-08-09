@@ -8,7 +8,6 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js";
     import { getDatabase, ref, get, set } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-database.js";
 
-    // Firebase config
     const firebaseConfig = {
       apiKey: "AIzaSyDsn16p7w8b-x8pEA_WTO5F2oUk4MHwcUc",
       authDomain: "wavetravel-3c4c4.firebaseapp.com",
@@ -19,11 +18,9 @@
       appId: "1:298226098137:web:720953b80e3e61c8bc43c8"
     };
 
-    // Initialize Firebase
     const app = initializeApp(firebaseConfig);
     const db = getDatabase(app);
 
-    // Constants and variables
     const MODEL_URL = 'https://raw.githubusercontent.com/myselfrakib/Face/main/models';
     const video = document.getElementById('videoInput');
     const canvas = document.getElementById('overlay');
@@ -42,7 +39,6 @@
     let unknownBox = null;
     let redBoxTimeout = null;
 
-    // Helpers to convert descriptors
     function descriptorToArray(descriptor) {
       return Array.from(descriptor);
     }
@@ -50,7 +46,6 @@
       return new Float32Array(arr);
     }
 
-    // Load known faces from Firebase
     async function loadKnownFaces() {
       const facesRef = ref(db, 'faces');
       const snapshot = await get(facesRef);
@@ -71,14 +66,12 @@
       }
       console.log(`Loaded ${knownLabels.length} faces. Next ID: ${nextId}`);
 
-      // Setup faceMatcher
       const labeledDescriptors = knownLabels.map((label, i) =>
         new faceapi.LabeledFaceDescriptors(label, [knownDescriptors[i]])
       );
       faceMatcher = new faceapi.FaceMatcher(labeledDescriptors, maxDescriptorDistance);
     }
 
-    // Save unknown face after form submission
     async function saveNewFace(name, age, height) {
       if (!unknownDescriptor) {
         alert("No face data to save!");
@@ -93,7 +86,6 @@
         encoding: descriptorToArray(unknownDescriptor),
         timestamp: new Date().toISOString()
       });
-      // Add to known faces arrays & update matcher
       knownDescriptors.push(unknownDescriptor);
       knownLabels.push(name);
       faceMatcher = new faceapi.FaceMatcher(
@@ -103,17 +95,15 @@
 
       console.log(`Saved new face: ${name} with ID: ${id}`);
 
-      // Reset unknown data
       unknownDescriptor = null;
       unknownBox = null;
       processingUnknown = false;
 
-      // Restart detection
       detectionActive = true;
       recognizeLoop();
     }
 
-    // Flip box horizontally for mirrored video
+    // Flip box coords horizontally to match mirrored video
     function flipBoxHorizontally(box, canvasWidth) {
       return {
         x: canvasWidth - box.x - box.width,
@@ -123,49 +113,18 @@
       };
     }
 
-    // Draw green box with label (fix text flip)
-    function drawGreenBox(box, text) {
-      ctx.strokeStyle = 'lime';
+    function drawBox(box, color, label) {
+      ctx.strokeStyle = color;
       ctx.lineWidth = 3;
       ctx.strokeRect(box.x, box.y, box.width, box.height);
 
-      // Save and reset transform to draw text unflipped
-      ctx.save();
-      ctx.setTransform(1, 0, 0, 1, 0, 0);  // reset any transforms
-
-      ctx.fillStyle = 'lime';
+      ctx.fillStyle = color;
       ctx.font = '18px Arial';
-
-      // Position text relative to box, but remember canvas is mirrored visually, so adjust X
-      // We want text at box.x from left (normal coords), so:
-      ctx.fillText(text, box.x, box.y > 20 ? box.y - 8 : box.y + 20);
-
-      ctx.restore();
+      ctx.fillText(label, box.x, box.y > 20 ? box.y - 8 : box.y + 20);
     }
 
-    // Draw red box with label (fix text flip)
-    function drawRedBox(box) {
-      ctx.strokeStyle = 'red';
-      ctx.lineWidth = 3;
-      ctx.strokeRect(box.x, box.y, box.width, box.height);
-
-      ctx.save();
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-
-      ctx.fillStyle = 'red';
-      ctx.font = '18px Arial';
-      ctx.fillText('Unknown', box.x, box.y > 20 ? box.y - 8 : box.y + 20);
-
-      ctx.restore();
-    }
-
-    // Main recognition loop
     async function recognizeLoop() {
       if (!detectionActive) return;
-
-      const centerX = video.videoWidth / 2;
-      const centerY = video.videoHeight / 2;
-      const regionSize = Math.min(video.videoWidth, video.videoHeight) * 0.6;
 
       const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions())
         .withFaceLandmarks()
@@ -182,27 +141,11 @@
       let box = detection.detection.box;
       box = flipBoxHorizontally(box, canvas.width);
 
-      const regionLeft = centerX - regionSize / 2;
-      const regionRight = centerX + regionSize / 2;
-      const regionTop = centerY - regionSize / 2;
-      const regionBottom = centerY + regionSize / 2;
-
-      const boxCenterX = box.x + box.width / 2;
-      const boxCenterY = box.y + box.height / 2;
-
-      if (
-        boxCenterX < regionLeft || boxCenterX > regionRight ||
-        boxCenterY < regionTop || boxCenterY > regionBottom
-      ) {
-        requestAnimationFrame(recognizeLoop);
-        return;
-      }
-
       const descriptor = detection.descriptor;
       const bestMatch = faceMatcher.findBestMatch(descriptor);
 
       if (bestMatch.label !== "unknown") {
-        drawGreenBox(box, bestMatch.label);
+        drawBox(box, 'lime', bestMatch.label);
         processingUnknown = false;
         unknownDescriptor = null;
         unknownBox = null;
@@ -216,31 +159,25 @@
           processingUnknown = true;
           unknownDescriptor = descriptor;
           unknownBox = box;
-          drawRedBox(box);
+          drawBox(box, 'red', 'Unknown');
           redBoxTimeout = setTimeout(() => {
             detectionActive = false;
             showForm();
           }, 3000);
         } else {
-          drawRedBox(unknownBox);
+          drawBox(unknownBox, 'red', 'Unknown');
         }
       }
     }
 
-    // Show form to input info
     function showForm() {
-      const formDiv = document.getElementById('infoFormDiv');
-      formDiv.style.display = 'block';
+      document.getElementById('infoFormDiv').style.display = 'block';
       document.getElementById('nameInput').focus();
     }
-
-    // Hide form and restart detection
     function hideForm() {
-      const formDiv = document.getElementById('infoFormDiv');
-      formDiv.style.display = 'none';
+      document.getElementById('infoFormDiv').style.display = 'none';
     }
 
-    // Start webcam
     async function startCamera() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
@@ -258,7 +195,6 @@
       }
     }
 
-    // Stop webcam
     function stopCamera() {
       detectionActive = false;
       const stream = video.srcObject;
@@ -272,7 +208,6 @@
       unknownBox = null;
     }
 
-    // On form submit save data & resume detection
     async function onSave() {
       const name = document.getElementById('nameInput').value.trim();
       const age = document.getElementById('ageInput').value.trim();
@@ -287,7 +222,6 @@
       hideForm();
     }
 
-    // Load models and known faces then enable start button
     async function init() {
       await Promise.all([
         faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
@@ -329,7 +263,7 @@
       width: 640px;
       height: 480px;
       object-fit: cover;
-      transform: scaleX(-1); /* mirror */
+      transform: scaleX(-1); /* mirror only video */
       border-radius: 8px;
     }
     #overlay {
@@ -338,7 +272,7 @@
       width: 640px;
       height: 480px;
       pointer-events: none;
-      transform: scaleX(-1);
+      /* no transform on canvas */
       border-radius: 8px;
     }
     #controls {
