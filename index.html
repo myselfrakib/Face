@@ -2,13 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>Auto Face Capture & Recognition with Firebase</title>
+<title>Face Recognition with Firebase - Centered View</title>
 <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js";
   import { getDatabase, ref, get, set } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-database.js";
 
-  // Firebase config
   const firebaseConfig = {
     apiKey: "AIzaSyDsn16p7w8b-x8pEA_WTO5F2oUk4MHwcUc",
     authDomain: "wavetravel-3c4c4.firebaseapp.com",
@@ -23,6 +22,7 @@
   const db = getDatabase(app);
 
   const MODEL_URL = 'https://raw.githubusercontent.com/myselfrakib/Face/main/models';
+
   const video = document.getElementById('videoInput');
   const canvas = document.getElementById('overlay');
   const ctx = canvas.getContext('2d');
@@ -36,7 +36,6 @@
   let unknownDescriptor = null;
   let unknownBox = null;
 
-  // Helpers
   function descriptorToArray(descriptor) {
     return Array.from(descriptor);
   }
@@ -44,7 +43,6 @@
     return new Float32Array(arr);
   }
 
-  // Load known faces
   async function loadKnownFaces() {
     const facesRef = ref(db, 'faces');
     const snapshot = await get(facesRef);
@@ -66,7 +64,6 @@
     console.log(`Loaded ${knownLabels.length} faces. Next ID: ${nextId}`);
   }
 
-  // Save new face with form data
   async function saveNewFace(name, age) {
     if (!unknownDescriptor || !unknownBox) return;
 
@@ -88,7 +85,6 @@
   }
 
   async function setup() {
-    // Load face-api models
     await Promise.all([
       faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
       faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
@@ -96,16 +92,31 @@
     ]);
     await loadKnownFaces();
 
-    // Start camera
     const stream = await navigator.mediaDevices.getUserMedia({ video: {} });
     video.srcObject = stream;
     await video.play();
 
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+    // Fixed size centered video & canvas
+    const width = 640;
+    const height = 480;
+
+    video.width = width;
+    video.height = height;
+
+    canvas.width = width;
+    canvas.height = height;
 
     detectionActive = true;
     recognizeLoop();
+  }
+
+  function flipBoxHorizontally(box, width) {
+    return {
+      x: width - box.x - box.width,
+      y: box.y,
+      width: box.width,
+      height: box.height
+    };
   }
 
   async function recognizeLoop() {
@@ -122,12 +133,14 @@
       return;
     }
 
-    // For simplicity: process only first detected face (can extend to multiple)
+    // Only first face for simplicity
     const detection = detections[0];
-    const box = detection.detection.box;
+    let box = detection.detection.box;
     const descriptor = detection.descriptor;
 
-    // Compare with known faces
+    // Flip box horizontally because video is mirrored
+    box = flipBoxHorizontally(box, canvas.width);
+
     let bestMatch = { distance: 1.0, label: "Unknown" };
     for (let i = 0; i < knownDescriptors.length; i++) {
       const dist = faceapi.euclideanDistance(descriptor, knownDescriptors[i]);
@@ -139,7 +152,6 @@
     const matched = bestMatch.distance < threshold;
 
     if (matched) {
-      // Green box for known face
       ctx.strokeStyle = "green";
       ctx.lineWidth = 3;
       ctx.strokeRect(box.x, box.y, box.width, box.height);
@@ -151,19 +163,16 @@
       unknownBox = null;
       requestAnimationFrame(recognizeLoop);
     } else {
-      // Red box for unknown face and hold for 3 seconds
       if (!processingUnknown) {
         processingUnknown = true;
         unknownDescriptor = descriptor;
         unknownBox = box;
         drawRedBox(box);
-        // Pause detection loop and show form after 3 sec
         setTimeout(() => {
           detectionActive = false;
           showForm();
         }, 3000);
       } else {
-        // Keep showing red box while waiting
         drawRedBox(unknownBox);
       }
     }
@@ -178,7 +187,6 @@
     ctx.fillText(`Unknown`, box.x, box.y > 20 ? box.y - 8 : box.y + 20);
   }
 
-  // Form control
   const formContainer = document.getElementById('formContainer');
   const nameInput = document.getElementById('nameInput');
   const ageInput = document.getElementById('ageInput');
@@ -229,43 +237,46 @@
   cancelBtn.addEventListener('click', cancelForm);
 
   setup();
-
 </script>
+
 <style>
   body {
     margin: 0; padding: 0;
     background: #222;
     font-family: Arial, sans-serif;
     color: white;
-    overflow: hidden;
+    display: flex;
+    height: 100vh;
+    align-items: center;
+    justify-content: center;
   }
   #videoInput {
-    position: absolute;
-    top: 0; left: 0;
-    width: 100vw; height: 100vh;
+    width: 640px;
+    height: 480px;
     object-fit: cover;
-    transform: scaleX(-1);
-    z-index: 1;
+    transform: scaleX(-1); /* mirror video */
+    border-radius: 8px;
+    box-shadow: 0 0 15px #0f0;
   }
   #overlay {
     position: absolute;
-    top: 0; left: 0;
-    width: 100vw; height: 100vh;
+    width: 640px;
+    height: 480px;
     pointer-events: none;
-    transform: scaleX(-1);
-    z-index: 2;
+    transform: none; /* canvas NOT mirrored */
+    border-radius: 8px;
   }
   #formContainer {
     display: none;
     position: fixed;
     top: 50%; left: 50%;
     transform: translate(-50%, -50%);
-    background: rgba(0,0,0,0.9);
+    background: rgba(0,0,0,0.95);
     border-radius: 10px;
     padding: 20px;
     z-index: 10;
-    width: 280px;
-    box-shadow: 0 0 10px #0f0;
+    width: 300px;
+    box-shadow: 0 0 15px #0f0;
   }
   #formContainer label {
     display: block;
@@ -297,11 +308,29 @@
     color: white;
     margin-right: 0;
   }
+  /* Container to position video + canvas */
+  #videoWrapper {
+    position: relative;
+    width: 640px;
+    height: 480px;
+  }
+  #overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 2;
+  }
+  #videoInput {
+    position: relative;
+    z-index: 1;
+  }
 </style>
 </head>
 <body>
-  <video id="videoInput" autoplay muted></video>
-  <canvas id="overlay"></canvas>
+  <div id="videoWrapper">
+    <video id="videoInput" autoplay muted></video>
+    <canvas id="overlay"></canvas>
+  </div>
 
   <div id="formContainer">
     <label for="nameInput">Name:</label>
@@ -313,4 +342,3 @@
   </div>
 </body>
 </html>
-
