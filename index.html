@@ -6,7 +6,7 @@
   <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js";
-    import { getDatabase, ref, get, set, update } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-database.js";
+    import { getDatabase, ref, get, set } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-database.js";
 
     // Firebase config
     const firebaseConfig = {
@@ -123,38 +123,49 @@
       };
     }
 
-    // Draw green box with label
+    // Draw green box with label (fix text flip)
     function drawGreenBox(box, text) {
       ctx.strokeStyle = 'lime';
       ctx.lineWidth = 3;
       ctx.strokeRect(box.x, box.y, box.width, box.height);
+
+      // Save and reset transform to draw text unflipped
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);  // reset any transforms
+
       ctx.fillStyle = 'lime';
       ctx.font = '18px Arial';
+
+      // Position text relative to box, but remember canvas is mirrored visually, so adjust X
+      // We want text at box.x from left (normal coords), so:
       ctx.fillText(text, box.x, box.y > 20 ? box.y - 8 : box.y + 20);
+
+      ctx.restore();
     }
 
-    // Draw red box with label
+    // Draw red box with label (fix text flip)
     function drawRedBox(box) {
       ctx.strokeStyle = 'red';
       ctx.lineWidth = 3;
       ctx.strokeRect(box.x, box.y, box.width, box.height);
+
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+
       ctx.fillStyle = 'red';
       ctx.font = '18px Arial';
       ctx.fillText('Unknown', box.x, box.y > 20 ? box.y - 8 : box.y + 20);
+
+      ctx.restore();
     }
 
     // Main recognition loop
     async function recognizeLoop() {
       if (!detectionActive) return;
 
-      // Only detect center portion of the video
       const centerX = video.videoWidth / 2;
       const centerY = video.videoHeight / 2;
-      const regionSize = Math.min(video.videoWidth, video.videoHeight) * 0.6; // 60% square center
-
-      // Draw video crop for detection
-      // Unfortunately face-api doesn't support ROI directly,
-      // so we will detect on full frame but only draw if box inside center region.
+      const regionSize = Math.min(video.videoWidth, video.videoHeight) * 0.6;
 
       const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions())
         .withFaceLandmarks()
@@ -167,12 +178,10 @@
         return;
       }
 
-      // Check only the first detected face (you can extend to multiple if you want)
       let detection = detections[0];
       let box = detection.detection.box;
       box = flipBoxHorizontally(box, canvas.width);
 
-      // Check if box is inside center crop region, else skip drawing & processing
       const regionLeft = centerX - regionSize / 2;
       const regionRight = centerX + regionSize / 2;
       const regionTop = centerY - regionSize / 2;
@@ -185,13 +194,11 @@
         boxCenterX < regionLeft || boxCenterX > regionRight ||
         boxCenterY < regionTop || boxCenterY > regionBottom
       ) {
-        // Outside center region, skip
         requestAnimationFrame(recognizeLoop);
         return;
       }
 
       const descriptor = detection.descriptor;
-
       const bestMatch = faceMatcher.findBestMatch(descriptor);
 
       if (bestMatch.label !== "unknown") {
@@ -199,34 +206,28 @@
         processingUnknown = false;
         unknownDescriptor = null;
         unknownBox = null;
-
         if (redBoxTimeout) {
           clearTimeout(redBoxTimeout);
           redBoxTimeout = null;
         }
-
         requestAnimationFrame(recognizeLoop);
       } else {
-        // Unknown face
         if (!processingUnknown) {
           processingUnknown = true;
           unknownDescriptor = descriptor;
           unknownBox = box;
           drawRedBox(box);
-
-          // Hold red box for 3 seconds, then pause detection and show form
           redBoxTimeout = setTimeout(() => {
             detectionActive = false;
             showForm();
           }, 3000);
         } else {
-          // Continue showing red box while waiting
           drawRedBox(unknownBox);
         }
       }
     }
 
-    // Show form to input name, age, height
+    // Show form to input info
     function showForm() {
       const formDiv = document.getElementById('infoFormDiv');
       formDiv.style.display = 'block';
