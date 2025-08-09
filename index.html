@@ -39,6 +39,9 @@
     let unknownBox = null;
     let redBoxTimeout = null;
 
+    // NEW: Timer for form auto-close
+    let formTimeout = null;
+
     function descriptorToArray(descriptor) {
       return Array.from(descriptor);
     }
@@ -99,11 +102,16 @@
       unknownBox = null;
       processingUnknown = false;
 
+      // Clear form timeout if running
+      if(formTimeout) {
+        clearTimeout(formTimeout);
+        formTimeout = null;
+      }
+
       detectionActive = true;
       recognizeLoop();
     }
 
-    // Flip box coords horizontally to match mirrored video
     function flipBoxHorizontally(box, canvasWidth) {
       return {
         x: canvasWidth - box.x - box.width,
@@ -163,6 +171,16 @@
           redBoxTimeout = setTimeout(() => {
             detectionActive = false;
             showForm();
+
+            // NEW: Start 10 sec timer to auto-reset camera and hide form
+            formTimeout = setTimeout(() => {
+              hideForm();
+              detectionActive = true;
+              recognizeLoop();
+              processingUnknown = false;
+              unknownDescriptor = null;
+              unknownBox = null;
+            }, 10000);
           }, 3000);
         } else {
           drawBox(unknownBox, 'red', 'Unknown');
@@ -206,6 +224,16 @@
       processingUnknown = false;
       unknownDescriptor = null;
       unknownBox = null;
+
+      // Clear timers
+      if(redBoxTimeout) {
+        clearTimeout(redBoxTimeout);
+        redBoxTimeout = null;
+      }
+      if(formTimeout) {
+        clearTimeout(formTimeout);
+        formTimeout = null;
+      }
     }
 
     async function onSave() {
@@ -216,6 +244,12 @@
       if (!name) {
         alert("Please enter a name.");
         return;
+      }
+
+      // Clear the auto form close timer if user saves manually
+      if(formTimeout) {
+        clearTimeout(formTimeout);
+        formTimeout = null;
       }
 
       await saveNewFace(name, age, height);
@@ -239,6 +273,10 @@
       document.getElementById('stopBtn').onclick = stopCamera;
       document.getElementById('saveBtn').onclick = onSave;
       document.getElementById('cancelBtn').onclick = () => {
+        if(formTimeout) {
+          clearTimeout(formTimeout);
+          formTimeout = null;
+        }
         hideForm();
         detectionActive = true;
         recognizeLoop();
@@ -272,7 +310,6 @@
       width: 640px;
       height: 480px;
       pointer-events: none;
-      /* no transform on canvas */
       border-radius: 8px;
     }
     #controls {
