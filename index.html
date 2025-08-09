@@ -1,344 +1,423 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<title>Face Recognition with Firebase - Centered View</title>
-<script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
-<script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js";
-  import { getDatabase, ref, get, set } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-database.js";
+  <meta charset="UTF-8" />
+  <title>Face Recognition with Firebase</title>
+  <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js";
+    import { getDatabase, ref, get, set, update } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-database.js";
 
-  const firebaseConfig = {
-    apiKey: "AIzaSyDsn16p7w8b-x8pEA_WTO5F2oUk4MHwcUc",
-    authDomain: "wavetravel-3c4c4.firebaseapp.com",
-    databaseURL: "https://wavetravel-3c4c4-default-rtdb.firebaseio.com",
-    projectId: "wavetravel-3c4c4",
-    storageBucket: "wavetravel-3c4c4.appspot.com",
-    messagingSenderId: "298226098137",
-    appId: "1:298226098137:web:720953b80e3e61c8bc43c8"
-  };
+    // Firebase config
+    const firebaseConfig = {
+      apiKey: "AIzaSyDsn16p7w8b-x8pEA_WTO5F2oUk4MHwcUc",
+      authDomain: "wavetravel-3c4c4.firebaseapp.com",
+      databaseURL: "https://wavetravel-3c4c4-default-rtdb.firebaseio.com",
+      projectId: "wavetravel-3c4c4",
+      storageBucket: "wavetravel-3c4c4.appspot.com",
+      messagingSenderId: "298226098137",
+      appId: "1:298226098137:web:720953b80e3e61c8bc43c8"
+    };
 
-  const app = initializeApp(firebaseConfig);
-  const db = getDatabase(app);
+    // Initialize Firebase
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
 
-  const MODEL_URL = 'https://raw.githubusercontent.com/myselfrakib/Face/main/models';
+    // Constants and variables
+    const MODEL_URL = 'https://raw.githubusercontent.com/myselfrakib/Face/main/models';
+    const video = document.getElementById('videoInput');
+    const canvas = document.getElementById('overlay');
+    const ctx = canvas.getContext('2d');
 
-  const video = document.getElementById('videoInput');
-  const canvas = document.getElementById('overlay');
-  const ctx = canvas.getContext('2d');
+    let knownDescriptors = [];
+    let knownLabels = [];
+    let nextId = 100;
 
-  let knownDescriptors = [];
-  let knownLabels = [];
-  let nextId = 100;
+    let faceMatcher = null;
+    const maxDescriptorDistance = 0.6;
 
-  let detectionActive = false;
-  let processingUnknown = false;
-  let unknownDescriptor = null;
-  let unknownBox = null;
+    let detectionActive = false;
+    let processingUnknown = false;
+    let unknownDescriptor = null;
+    let unknownBox = null;
+    let redBoxTimeout = null;
 
-  function descriptorToArray(descriptor) {
-    return Array.from(descriptor);
-  }
-  function arrayToDescriptor(arr) {
-    return new Float32Array(arr);
-  }
+    // Helpers to convert descriptors
+    function descriptorToArray(descriptor) {
+      return Array.from(descriptor);
+    }
+    function arrayToDescriptor(arr) {
+      return new Float32Array(arr);
+    }
 
-  async function loadKnownFaces() {
-    const facesRef = ref(db, 'faces');
-    const snapshot = await get(facesRef);
-    knownDescriptors = [];
-    knownLabels = [];
-    nextId = 100;
+    // Load known faces from Firebase
+    async function loadKnownFaces() {
+      const facesRef = ref(db, 'faces');
+      const snapshot = await get(facesRef);
+      knownDescriptors = [];
+      knownLabels = [];
+      nextId = 100;
 
-    if (snapshot.exists()) {
-      const data = snapshot.val();
-      for (const [id, face] of Object.entries(data)) {
-        if (face.encoding && face.name) {
-          knownDescriptors.push(arrayToDescriptor(face.encoding));
-          knownLabels.push(face.name);
-          const numericId = parseInt(id, 10);
-          if (!isNaN(numericId) && numericId >= nextId) nextId = numericId + 1;
+      if (snapshot.exists()) {
+        const data = snapshot.val();
+        for (const [id, face] of Object.entries(data)) {
+          if (face.encoding && face.name) {
+            knownDescriptors.push(arrayToDescriptor(face.encoding));
+            knownLabels.push(face.name);
+            const numericId = parseInt(id, 10);
+            if (!isNaN(numericId) && numericId >= nextId) nextId = numericId + 1;
+          }
+        }
+      }
+      console.log(`Loaded ${knownLabels.length} faces. Next ID: ${nextId}`);
+
+      // Setup faceMatcher
+      const labeledDescriptors = knownLabels.map((label, i) =>
+        new faceapi.LabeledFaceDescriptors(label, [knownDescriptors[i]])
+      );
+      faceMatcher = new faceapi.FaceMatcher(labeledDescriptors, maxDescriptorDistance);
+    }
+
+    // Save unknown face after form submission
+    async function saveNewFace(name, age, height) {
+      if (!unknownDescriptor) {
+        alert("No face data to save!");
+        return;
+      }
+      const id = nextId++;
+      const faceRef = ref(db, `faces/${id}`);
+      await set(faceRef, {
+        name,
+        age,
+        height,
+        encoding: descriptorToArray(unknownDescriptor),
+        timestamp: new Date().toISOString()
+      });
+      // Add to known faces arrays & update matcher
+      knownDescriptors.push(unknownDescriptor);
+      knownLabels.push(name);
+      faceMatcher = new faceapi.FaceMatcher(
+        knownLabels.map((label, i) => new faceapi.LabeledFaceDescriptors(label, [knownDescriptors[i]])),
+        maxDescriptorDistance
+      );
+
+      console.log(`Saved new face: ${name} with ID: ${id}`);
+
+      // Reset unknown data
+      unknownDescriptor = null;
+      unknownBox = null;
+      processingUnknown = false;
+
+      // Restart detection
+      detectionActive = true;
+      recognizeLoop();
+    }
+
+    // Flip box horizontally for mirrored video
+    function flipBoxHorizontally(box, canvasWidth) {
+      return {
+        x: canvasWidth - box.x - box.width,
+        y: box.y,
+        width: box.width,
+        height: box.height
+      };
+    }
+
+    // Draw green box with label
+    function drawGreenBox(box, text) {
+      ctx.strokeStyle = 'lime';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(box.x, box.y, box.width, box.height);
+      ctx.fillStyle = 'lime';
+      ctx.font = '18px Arial';
+      ctx.fillText(text, box.x, box.y > 20 ? box.y - 8 : box.y + 20);
+    }
+
+    // Draw red box with label
+    function drawRedBox(box) {
+      ctx.strokeStyle = 'red';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(box.x, box.y, box.width, box.height);
+      ctx.fillStyle = 'red';
+      ctx.font = '18px Arial';
+      ctx.fillText('Unknown', box.x, box.y > 20 ? box.y - 8 : box.y + 20);
+    }
+
+    // Main recognition loop
+    async function recognizeLoop() {
+      if (!detectionActive) return;
+
+      // Only detect center portion of the video
+      const centerX = video.videoWidth / 2;
+      const centerY = video.videoHeight / 2;
+      const regionSize = Math.min(video.videoWidth, video.videoHeight) * 0.6; // 60% square center
+
+      // Draw video crop for detection
+      // Unfortunately face-api doesn't support ROI directly,
+      // so we will detect on full frame but only draw if box inside center region.
+
+      const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions())
+        .withFaceLandmarks()
+        .withFaceDescriptors();
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      if (detections.length === 0) {
+        requestAnimationFrame(recognizeLoop);
+        return;
+      }
+
+      // Check only the first detected face (you can extend to multiple if you want)
+      let detection = detections[0];
+      let box = detection.detection.box;
+      box = flipBoxHorizontally(box, canvas.width);
+
+      // Check if box is inside center crop region, else skip drawing & processing
+      const regionLeft = centerX - regionSize / 2;
+      const regionRight = centerX + regionSize / 2;
+      const regionTop = centerY - regionSize / 2;
+      const regionBottom = centerY + regionSize / 2;
+
+      const boxCenterX = box.x + box.width / 2;
+      const boxCenterY = box.y + box.height / 2;
+
+      if (
+        boxCenterX < regionLeft || boxCenterX > regionRight ||
+        boxCenterY < regionTop || boxCenterY > regionBottom
+      ) {
+        // Outside center region, skip
+        requestAnimationFrame(recognizeLoop);
+        return;
+      }
+
+      const descriptor = detection.descriptor;
+
+      const bestMatch = faceMatcher.findBestMatch(descriptor);
+
+      if (bestMatch.label !== "unknown") {
+        drawGreenBox(box, bestMatch.label);
+        processingUnknown = false;
+        unknownDescriptor = null;
+        unknownBox = null;
+
+        if (redBoxTimeout) {
+          clearTimeout(redBoxTimeout);
+          redBoxTimeout = null;
+        }
+
+        requestAnimationFrame(recognizeLoop);
+      } else {
+        // Unknown face
+        if (!processingUnknown) {
+          processingUnknown = true;
+          unknownDescriptor = descriptor;
+          unknownBox = box;
+          drawRedBox(box);
+
+          // Hold red box for 3 seconds, then pause detection and show form
+          redBoxTimeout = setTimeout(() => {
+            detectionActive = false;
+            showForm();
+          }, 3000);
+        } else {
+          // Continue showing red box while waiting
+          drawRedBox(unknownBox);
         }
       }
     }
-    console.log(`Loaded ${knownLabels.length} faces. Next ID: ${nextId}`);
-  }
 
-  async function saveNewFace(name, age) {
-    if (!unknownDescriptor || !unknownBox) return;
-
-    const id = nextId++;
-    const faceRef = ref(db, `faces/${id}`);
-
-    await set(faceRef, {
-      name,
-      age,
-      encoding: descriptorToArray(unknownDescriptor),
-      timestamp: new Date().toISOString()
-    });
-
-    knownDescriptors.push(unknownDescriptor);
-    knownLabels.push(name);
-    unknownDescriptor = null;
-    unknownBox = null;
-    console.log(`Saved new face: ${name} (ID ${id})`);
-  }
-
-  async function setup() {
-    await Promise.all([
-      faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
-      faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
-      faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
-    ]);
-    await loadKnownFaces();
-
-    const stream = await navigator.mediaDevices.getUserMedia({ video: {} });
-    video.srcObject = stream;
-    await video.play();
-
-    // Fixed size centered video & canvas
-    const width = 640;
-    const height = 480;
-
-    video.width = width;
-    video.height = height;
-
-    canvas.width = width;
-    canvas.height = height;
-
-    detectionActive = true;
-    recognizeLoop();
-  }
-
-  function flipBoxHorizontally(box, width) {
-    return {
-      x: width - box.x - box.width,
-      y: box.y,
-      width: box.width,
-      height: box.height
-    };
-  }
-
-  async function recognizeLoop() {
-    if (!detectionActive) return;
-
-    const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions())
-      .withFaceLandmarks()
-      .withFaceDescriptors();
-
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    if (detections.length === 0) {
-      requestAnimationFrame(recognizeLoop);
-      return;
+    // Show form to input name, age, height
+    function showForm() {
+      const formDiv = document.getElementById('infoFormDiv');
+      formDiv.style.display = 'block';
+      document.getElementById('nameInput').focus();
     }
 
-    // Only first face for simplicity
-    const detection = detections[0];
-    let box = detection.detection.box;
-    const descriptor = detection.descriptor;
+    // Hide form and restart detection
+    function hideForm() {
+      const formDiv = document.getElementById('infoFormDiv');
+      formDiv.style.display = 'none';
+    }
 
-    // Flip box horizontally because video is mirrored
-    box = flipBoxHorizontally(box, canvas.width);
-
-    let bestMatch = { distance: 1.0, label: "Unknown" };
-    for (let i = 0; i < knownDescriptors.length; i++) {
-      const dist = faceapi.euclideanDistance(descriptor, knownDescriptors[i]);
-      if (dist < bestMatch.distance) {
-        bestMatch = { distance: dist, label: knownLabels[i] };
+    // Start webcam
+    async function startCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+        video.srcObject = stream;
+        await video.play();
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        detectionActive = true;
+        processingUnknown = false;
+        unknownDescriptor = null;
+        unknownBox = null;
+        recognizeLoop();
+      } catch (e) {
+        alert("Error accessing camera: " + e.message);
       }
     }
-    const threshold = 0.5;
-    const matched = bestMatch.distance < threshold;
 
-    if (matched) {
-      ctx.strokeStyle = "green";
-      ctx.lineWidth = 3;
-      ctx.strokeRect(box.x, box.y, box.width, box.height);
-      ctx.fillStyle = "green";
-      ctx.font = "18px Arial";
-      ctx.fillText(`${bestMatch.label} (${bestMatch.distance.toFixed(2)})`, box.x, box.y > 20 ? box.y - 8 : box.y + 20);
+    // Stop webcam
+    function stopCamera() {
+      detectionActive = false;
+      const stream = video.srcObject;
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+      }
+      video.srcObject = null;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
       processingUnknown = false;
       unknownDescriptor = null;
       unknownBox = null;
-      requestAnimationFrame(recognizeLoop);
-    } else {
-      if (!processingUnknown) {
-        processingUnknown = true;
-        unknownDescriptor = descriptor;
-        unknownBox = box;
-        drawRedBox(box);
-        setTimeout(() => {
-          detectionActive = false;
-          showForm();
-        }, 3000);
-      } else {
-        drawRedBox(unknownBox);
+    }
+
+    // On form submit save data & resume detection
+    async function onSave() {
+      const name = document.getElementById('nameInput').value.trim();
+      const age = document.getElementById('ageInput').value.trim();
+      const height = document.getElementById('heightInput').value.trim();
+
+      if (!name) {
+        alert("Please enter a name.");
+        return;
       }
-    }
-  }
 
-  function drawRedBox(box) {
-    ctx.strokeStyle = "red";
-    ctx.lineWidth = 3;
-    ctx.strokeRect(box.x, box.y, box.width, box.height);
-    ctx.fillStyle = "red";
-    ctx.font = "18px Arial";
-    ctx.fillText(`Unknown`, box.x, box.y > 20 ? box.y - 8 : box.y + 20);
-  }
-
-  const formContainer = document.getElementById('formContainer');
-  const nameInput = document.getElementById('nameInput');
-  const ageInput = document.getElementById('ageInput');
-  const saveBtn = document.getElementById('saveBtn');
-  const cancelBtn = document.getElementById('cancelBtn');
-
-  function showForm() {
-    formContainer.style.display = 'block';
-    nameInput.value = '';
-    ageInput.value = '';
-    nameInput.focus();
-  }
-
-  async function saveForm() {
-    const name = nameInput.value.trim();
-    const age = parseInt(ageInput.value);
-
-    if (!name) {
-      alert("Please enter a name");
-      nameInput.focus();
-      return;
-    }
-    if (!age || age < 1 || age > 120) {
-      alert("Please enter a valid age (1-120)");
-      ageInput.focus();
-      return;
+      await saveNewFace(name, age, height);
+      hideForm();
     }
 
-    await saveNewFace(name, age);
-    formContainer.style.display = 'none';
-    detectionActive = true;
-    processingUnknown = false;
-    unknownDescriptor = null;
-    unknownBox = null;
-    recognizeLoop();
-  }
+    // Load models and known faces then enable start button
+    async function init() {
+      await Promise.all([
+        faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+        faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+        faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
+      ]);
+      await loadKnownFaces();
+      document.getElementById('startBtn').disabled = false;
+    }
 
-  function cancelForm() {
-    formContainer.style.display = 'none';
-    detectionActive = true;
-    processingUnknown = false;
-    unknownDescriptor = null;
-    unknownBox = null;
-    recognizeLoop();
-  }
+    window.onload = () => {
+      init();
 
-  saveBtn.addEventListener('click', saveForm);
-  cancelBtn.addEventListener('click', cancelForm);
+      document.getElementById('startBtn').onclick = startCamera;
+      document.getElementById('stopBtn').onclick = stopCamera;
+      document.getElementById('saveBtn').onclick = onSave;
+      document.getElementById('cancelBtn').onclick = () => {
+        hideForm();
+        detectionActive = true;
+        recognizeLoop();
+      };
+    };
+  </script>
 
-  setup();
-</script>
-
-<style>
-  body {
-    margin: 0; padding: 0;
-    background: #222;
-    font-family: Arial, sans-serif;
-    color: white;
-    display: flex;
-    height: 100vh;
-    align-items: center;
-    justify-content: center;
-  }
-  #videoInput {
-    width: 640px;
-    height: 480px;
-    object-fit: cover;
-    transform: scaleX(-1); /* mirror video */
-    border-radius: 8px;
-    box-shadow: 0 0 15px #0f0;
-  }
-  #overlay {
-    position: absolute;
-    width: 640px;
-    height: 480px;
-    pointer-events: none;
-    transform: none; /* canvas NOT mirrored */
-    border-radius: 8px;
-  }
-  #formContainer {
-    display: none;
-    position: fixed;
-    top: 50%; left: 50%;
-    transform: translate(-50%, -50%);
-    background: rgba(0,0,0,0.95);
-    border-radius: 10px;
-    padding: 20px;
-    z-index: 10;
-    width: 300px;
-    box-shadow: 0 0 15px #0f0;
-  }
-  #formContainer label {
-    display: block;
-    margin-bottom: 6px;
-  }
-  #formContainer input {
-    width: 100%;
-    padding: 8px;
-    margin-bottom: 12px;
-    border-radius: 4px;
-    border: none;
-    font-size: 16px;
-  }
-  #formContainer button {
-    width: 48%;
-    padding: 8px;
-    margin-right: 4%;
-    font-size: 16px;
-    border: none;
-    border-radius: 5px;
-    cursor: pointer;
-  }
-  #saveBtn {
-    background-color: #28a745;
-    color: white;
-  }
-  #cancelBtn {
-    background-color: #dc3545;
-    color: white;
-    margin-right: 0;
-  }
-  /* Container to position video + canvas */
-  #videoWrapper {
-    position: relative;
-    width: 640px;
-    height: 480px;
-  }
-  #overlay {
-    position: absolute;
-    top: 0;
-    left: 0;
-    z-index: 2;
-  }
-  #videoInput {
-    position: relative;
-    z-index: 1;
-  }
-</style>
+  <style>
+    body {
+      margin: 0; padding: 0;
+      background: #222;
+      color: white;
+      font-family: Arial, sans-serif;
+      text-align: center;
+    }
+    #videoContainer {
+      position: relative;
+      width: 640px;
+      margin: 20px auto;
+    }
+    #videoInput {
+      width: 640px;
+      height: 480px;
+      object-fit: cover;
+      transform: scaleX(-1); /* mirror */
+      border-radius: 8px;
+    }
+    #overlay {
+      position: absolute;
+      top: 0; left: 0;
+      width: 640px;
+      height: 480px;
+      pointer-events: none;
+      transform: scaleX(-1);
+      border-radius: 8px;
+    }
+    #controls {
+      margin: 10px;
+    }
+    button {
+      margin: 0 8px;
+      padding: 8px 20px;
+      font-size: 16px;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      background-color: #4caf50;
+      color: white;
+      transition: background-color 0.3s ease;
+    }
+    button:disabled {
+      background-color: #777;
+      cursor: not-allowed;
+    }
+    button:hover:not(:disabled) {
+      background-color: #45a049;
+    }
+    #infoFormDiv {
+      background: #333;
+      border-radius: 8px;
+      width: 320px;
+      padding: 20px;
+      margin: 20px auto;
+      display: none;
+    }
+    #infoFormDiv input {
+      width: 100%;
+      padding: 8px;
+      margin: 8px 0;
+      border-radius: 4px;
+      border: none;
+      font-size: 16px;
+    }
+    #infoFormDiv label {
+      display: block;
+      margin-top: 10px;
+      text-align: left;
+      font-weight: bold;
+    }
+    #infoFormDiv button {
+      width: 48%;
+      margin: 10px 1%;
+      background-color: #2196F3;
+    }
+    #infoFormDiv button.cancel {
+      background-color: #f44336;
+    }
+  </style>
 </head>
 <body>
-  <div id="videoWrapper">
+  <h2>Face Recognition with Firebase</h2>
+
+  <div id="videoContainer">
     <video id="videoInput" autoplay muted></video>
     <canvas id="overlay"></canvas>
   </div>
 
-  <div id="formContainer">
+  <div id="controls">
+    <button id="startBtn" disabled>Start Camera</button>
+    <button id="stopBtn">Stop Camera</button>
+  </div>
+
+  <div id="infoFormDiv">
+    <h3>New Face Detected</h3>
     <label for="nameInput">Name:</label>
-    <input id="nameInput" type="text" placeholder="Enter name" />
+    <input type="text" id="nameInput" placeholder="Enter name" />
     <label for="ageInput">Age:</label>
-    <input id="ageInput" type="number" min="1" max="120" placeholder="Enter age" />
-    <button id="saveBtn">Save</button>
-    <button id="cancelBtn">Cancel</button>
+    <input type="number" id="ageInput" placeholder="Enter age" />
+    <label for="heightInput">Height (cm):</label>
+    <input type="number" id="heightInput" placeholder="Enter height in cm" />
+    <div>
+      <button id="saveBtn">Save</button>
+      <button id="cancelBtn" class="cancel">Cancel</button>
+    </div>
   </div>
 </body>
 </html>
