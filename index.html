@@ -2,13 +2,12 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Face Recognition with Firebase</title>
+  <title>Face Recognition Capture with Firebase</title>
   <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js";
-    import { getDatabase, ref, get, set, update } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-database.js";
+    import { getDatabase, ref, set, get } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-database.js";
 
-    // ----------- Firebase config --------------
     const firebaseConfig = {
       apiKey: "AIzaSyDsn16p7w8b-x8pEA_WTO5F2oUk4MHwcUc",
       authDomain: "wavetravel-3c4c4.firebaseapp.com",
@@ -19,12 +18,11 @@
       appId: "1:298226098137:web:720953b80e3e61c8bc43c8"
     };
 
-    // Initialize Firebase
     const app = initializeApp(firebaseConfig);
     const db = getDatabase(app);
 
-    // ----------- Variables --------------
     const MODEL_URL = 'https://raw.githubusercontent.com/myselfrakib/Face/main/models';
+
     const video = document.getElementById('videoInput');
     const canvas = document.getElementById('overlay');
     const ctx = canvas.getContext('2d');
@@ -33,23 +31,22 @@
     let knownLabels = [];
     let nextId = 100;
 
-    // Helper: convert Float32Array to normal array for Firebase saving
+    let currentDetections = [];
+
     function descriptorToArray(descriptor) {
       return Array.from(descriptor);
     }
 
-    // Helper: convert array from Firebase back to Float32Array
     function arrayToDescriptor(arr) {
       return new Float32Array(arr);
     }
 
-    // Load known faces from Firebase
     async function loadKnownFaces() {
       const facesRef = ref(db, 'faces');
       const snapshot = await get(facesRef);
       knownDescriptors = [];
       knownLabels = [];
-      nextId = 100; // reset to 100 or you can find max ID from data
+      nextId = 100;
 
       if (snapshot.exists()) {
         const data = snapshot.val();
@@ -65,10 +62,9 @@
       console.log(`Loaded ${knownLabels.length} faces. Next ID: ${nextId}`);
     }
 
-    // Save unknown face to Firebase with generated ticket name
-    async function saveUnknownFace(descriptor) {
+    async function saveFaceToFirebase(descriptor) {
       const id = nextId++;
-      const name = `ticket${id - 99}`; // ticket1 for id=100 etc.
+      const name = `ticket${id - 99}`;
       const faceRef = ref(db, `faces/${id}`);
       await set(faceRef, {
         name,
@@ -78,110 +74,114 @@
       knownDescriptors.push(descriptor);
       knownLabels.push(name);
       console.log(`Saved new face as ${name} with ID ${id}`);
-      return name;
+      alert(`Face saved as ${name}`);
     }
 
-    async function setup() {
-      // Load models from your GitHub repo
+    async function startCamera() {
       await Promise.all([
         faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
         faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
         faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
       ]);
+
       await loadKnownFaces();
 
-      // Start webcam
       navigator.mediaDevices.getUserMedia({ video: {} })
         .then(stream => {
           video.srcObject = stream;
           video.play();
+          video.addEventListener('play', () => {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            detectLoop();
+          });
         })
         .catch(err => {
-          console.error("Failed to access webcam:", err);
+          console.error("Camera start failed:", err);
         });
-
-      video.addEventListener('play', () => {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        recognizeLoop();
-      });
     }
 
-    async function recognizeLoop() {
+    async function detectLoop() {
       if (video.paused || video.ended) return;
 
-      // Detect faces with tinyFaceDetector for speed
       const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions())
         .withFaceLandmarks()
         .withFaceDescriptors();
+
+      currentDetections = detections;
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       for (const detection of detections) {
         const box = detection.detection.box;
-        const descriptor = detection.descriptor;
-
-        // Compare with known faces
-        let bestMatch = { distance: 1.0, label: "Unknown" };
-        for (let i = 0; i < knownDescriptors.length; i++) {
-          const dist = faceapi.euclideanDistance(descriptor, knownDescriptors[i]);
-          if (dist < bestMatch.distance) {
-            bestMatch = { distance: dist, label: knownLabels[i] };
-          }
-        }
-
-        // Threshold for matching
-        const threshold = 0.5;
-        let displayName = bestMatch.distance < threshold ? bestMatch.label : null;
-
-        if (!displayName) {
-          // Save unknown face
-          displayName = await saveUnknownFace(descriptor);
-        }
-
-        // Draw box and label
-        ctx.strokeStyle = displayName === "Unknown" ? "red" : "green";
+        ctx.strokeStyle = "blue";
         ctx.lineWidth = 2;
         ctx.strokeRect(box.x, box.y, box.width, box.height);
-        ctx.fillStyle = ctx.strokeStyle;
-        ctx.font = "16px Arial";
-        ctx.fillText(displayName, box.x, box.y > 20 ? box.y - 5 : box.y + 15);
       }
 
-      requestAnimationFrame(recognizeLoop);
+      requestAnimationFrame(detectLoop);
     }
 
-    setup();
+    document.getElementById('startBtn').addEventListener('click', () => {
+      startCamera();
+    });
+
+    document.getElementById('captureBtn').addEventListener('click', async () => {
+      if (!currentDetections.length) {
+        alert('No face detected. Please make sure your face is visible.');
+        return;
+      }
+      // Save the first detected face descriptor
+      const descriptor = currentDetections[0].descriptor;
+      await saveFaceToFirebase(descriptor);
+    });
   </script>
   <style>
     body {
-      margin: 0;
-      padding: 0;
-      overflow: hidden;
-      text-align: center;
-      background: #222;
+      background-color: #222;
       color: white;
       font-family: Arial, sans-serif;
+      text-align: center;
+      margin: 0; padding: 0;
+      overflow: hidden;
     }
     #videoInput {
-      position: absolute;
-      top: 0; left: 0;
-      width: 100vw;
-      height: 100vh;
-      object-fit: cover;
-      transform: scaleX(-1); /* mirror */
+      margin-top: 10px;
+      border-radius: 10px;
+      max-width: 90vw;
+      max-height: 60vh;
+      transform: scaleX(-1);
     }
     #overlay {
       position: absolute;
-      top: 0; left: 0;
-      width: 100vw;
-      height: 100vh;
+      top: 60px;
+      left: 50%;
+      transform: translateX(-50%) scaleX(-1);
       pointer-events: none;
-      transform: scaleX(-1);
+      border-radius: 10px;
+      max-width: 90vw;
+      max-height: 60vh;
+    }
+    button {
+      margin: 15px 10px;
+      padding: 10px 25px;
+      font-size: 18px;
+      border-radius: 8px;
+      border: none;
+      cursor: pointer;
+      background: #08f;
+      color: white;
+      transition: background-color 0.3s;
+    }
+    button:hover {
+      background: #06c;
     }
   </style>
 </head>
 <body>
+  <h1>Face Recognition Capture</h1>
+  <button id="startBtn">Start Camera</button>
+  <button id="captureBtn">Capture Face</button><br/>
   <video id="videoInput" autoplay muted></video>
   <canvas id="overlay"></canvas>
 </body>
