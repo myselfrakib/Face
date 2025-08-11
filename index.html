@@ -1,20 +1,58 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8" />
-  <title>Face Recognition with Firebase</title>
-  <style>
-    body { font-family: Arial, sans-serif; text-align: center; background: #f5f5f5; }
-    video { border: 2px solid #333; border-radius: 8px; }
-    #status { margin-top: 10px; font-weight: bold; color: #444; }
-  </style>
+<meta charset="UTF-8">
+<title>Face Ticket System</title>
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    background: #111;
+    color: white;
+    text-align: center;
+    margin: 0;
+  }
+  video {
+    border: 5px solid white;
+    border-radius: 10px;
+    margin-top: 20px;
+  }
+  button {
+    margin: 10px;
+    padding: 10px 20px;
+    font-size: 16px;
+    border: none;
+    background: #4CAF50;
+    color: white;
+    cursor: pointer;
+    border-radius: 5px;
+  }
+  button:hover { background: #45a049; }
+  #overlay {
+    position: fixed;
+    top: 20%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(0,0,0,0.8);
+    padding: 20px 40px;
+    border-radius: 10px;
+    font-size: 24px;
+    display: none;
+  }
+</style>
 </head>
 <body>
-  <h2>Face Recognition with Auto Save to Firebase</h2>
-  <video id="video" width="720" height="560" autoplay muted></video>
-  <div id="status">Loading models...</div>
 
-  <!-- Firebase SDKs -->
+<h1>Face Ticket System</h1>
+<video id="video" width="640" height="480" autoplay muted></video><br>
+<button id="registerBtn">Register Ticket</button>
+<button id="verifyBtn">Verify Ticket</button>
+
+<div id="overlay"></div>
+
+<!-- Face API -->
+<script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+
+<!-- Firebase SDKs -->
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js";
     import { getDatabase, ref, set, get, child } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-database.js";
@@ -30,59 +68,99 @@
       appId: "1:298226098137:web:720953b80e3e61c8bc43c8"
     };
 
-    const app = initializeApp(firebaseConfig);
-    const db = getDatabase(app);
+  const app = initializeApp(firebaseConfig);
+  const db = getDatabase(app);
 
-    // Load face-api.js from CDN
-    const script = document.createElement('script');
-    script.src = "https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js";
-    script.onload = startRecognition;
-    document.head.appendChild(script);
+  const video = document.getElementById("video");
+  const overlay = document.getElementById("overlay");
 
-    async function startRecognition() {
-      const statusEl = document.getElementById("status");
-      statusEl.textContent = "Loading models...";
-      await faceapi.nets.tinyFaceDetector.loadFromUri('/models');
-      await faceapi.nets.faceLandmark68Net.loadFromUri('/models');
-      await faceapi.nets.faceRecognitionNet.loadFromUri('/models');
+  // Start Camera
+  async function startVideo() {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    video.srcObject = stream;
+  }
 
-      const video = document.getElementById('video');
-      navigator.mediaDevices.getUserMedia({ video: {} })
-        .then(stream => video.srcObject = stream)
-        .catch(err => console.error(err));
+  // Load Models
+  Promise.all([
+    faceapi.nets.tinyFaceDetector.loadFromUri("/models"),
+    faceapi.nets.faceLandmark68Net.loadFromUri("/models"),
+    faceapi.nets.faceRecognitionNet.loadFromUri("/models")
+  ]).then(startVideo);
 
-      video.addEventListener('play', () => {
-        statusEl.textContent = "Detecting faces...";
-        setInterval(async () => {
-          const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions())
-            .withFaceLandmarks()
-            .withFaceDescriptors();
+  function showOverlay(message, color = "limegreen") {
+    overlay.style.display = "block";
+    overlay.style.border = `3px solid ${color}`;
+    overlay.innerText = message;
+    setTimeout(() => overlay.style.display = "none", 3000);
+  }
 
-          if (detections.length > 0) {
-            statusEl.textContent = "Face detected, saving...";
-            const descriptor = Array.from(detections[0].descriptor); // Convert Float32Array to normal array
-            saveFaceData(descriptor);
+  async function captureFaceEncoding() {
+    const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
+                                   .withFaceLandmarks()
+                                   .withFaceDescriptor();
+    return detection ? Array.from(detection.descriptor) : null;
+  }
+
+  // Euclidean distance
+  function euclideanDistance(arr1, arr2) {
+    let sum = 0;
+    for (let i = 0; i < arr1.length; i++) {
+      sum += (arr1[i] - arr2[i]) ** 2;
+    }
+    return Math.sqrt(sum);
+  }
+
+  // REGISTER TICKET
+  document.getElementById("registerBtn").addEventListener("click", async () => {
+    const encoding = await captureFaceEncoding();
+    if (!encoding) return alert("No face detected!");
+
+    const snapshot = await get(ref(db, "tickets"));
+    let nextTicket = "ticket101";
+    if (snapshot.exists()) {
+      const tickets = Object.keys(snapshot.val());
+      const numbers = tickets.map(t => parseInt(t.replace("ticket", "")));
+      const maxNum = Math.max(...numbers);
+      nextTicket = `ticket${maxNum + 1}`;
+    }
+
+    await set(ref(db, `tickets/${nextTicket}`), { encoding });
+    showOverlay(`Registered as ${nextTicket}`);
+  });
+
+  // VERIFY TICKET
+  document.getElementById("verifyBtn").addEventListener("click", async () => {
+    const encoding = await captureFaceEncoding();
+    if (!encoding) return alert("No face detected!");
+
+    const snapshot = await get(ref(db, "tickets"));
+    let found = false;
+    let ticketNumber = null;
+
+    if (snapshot.exists()) {
+      snapshot.forEach(ticket => {
+        const data = ticket.val();
+        if (data.encoding) {
+          const dist = euclideanDistance(encoding, data.encoding);
+          if (dist < 0.6) {
+            found = true;
+            ticketNumber = ticket.key;
           }
-        }, 2000);
+        }
       });
     }
 
-    async function saveFaceData(descriptor) {
-      const dbRef = ref(db);
-      const snapshot = await get(child(dbRef, 'faces'));
-      let ticketNum = 101;
-      if (snapshot.exists()) {
-        const keys = Object.keys(snapshot.val());
-        const nums = keys.map(k => parseInt(k.replace("ticket", "")));
-        ticketNum = Math.max(...nums) + 1;
-      }
-      const ticketId = `ticket${ticketNum}`;
-      await set(ref(db, 'faces/' + ticketId), {
-        descriptor: descriptor,
-        timestamp: Date.now()
-      });
-      document.getElementById("status").textContent = `Saved as ${ticketId}`;
+    if (found) {
+      video.style.border = "5px solid limegreen";
+      showOverlay(`Ticket Verified: ${ticketNumber}`);
+      setTimeout(() => video.style.border = "5px solid white", 2000);
+    } else {
+      video.style.border = "5px solid red";
+      showOverlay("No ticket found", "red");
+      setTimeout(() => video.style.border = "5px solid white", 2000);
     }
-  </script>
+  });
+
+</script>
 </body>
 </html>
