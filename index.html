@@ -2,20 +2,58 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Face Encoding to Firebase</title>
+  <title>Face Ticket System</title>
   <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      background: #111;
+      color: white;
+      text-align: center;
+      font-family: Arial, sans-serif;
+    }
+    video {
+      display: block;
+      margin: 20px auto;
+      border: 5px solid white;
+      border-radius: 10px;
+    }
+    .button-container {
+      display: flex;
+      justify-content: center;
+      gap: 20px;
+      margin-top: 10px;
+    }
+    button {
+      font-size: 20px;
+      padding: 15px 25px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    #bookBtn {
+      background: #28a745;
+      color: white;
+    }
+    #verifyBtn {
+      background: #007bff;
+      color: white;
+    }
+  </style>
 </head>
 <body>
-  <h2>Face Recognition Data Capture</h2>
-  <video id="video" width="320" height="240" autoplay muted></video>
-  <br>
-  <button id="captureBtn">Capture Face Data</button>
+  <h1>Face Ticket System</h1>
+  <video id="video" width="480" height="360" autoplay muted></video>
+  <div class="button-container">
+    <button id="bookBtn">Book Ticket</button>
+    <button id="verifyBtn">Verify Ticket</button>
+  </div>
 
   <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js";
-    import { getDatabase, ref, set } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-database.js";
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
+    import { getDatabase, ref, set, get, push, child } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
 
-    // Firebase Config
+    // Firebase config
     const firebaseConfig = {
       apiKey: "AIzaSyDsn16p7w8b-x8pEA_WTO5F2oUk4MHwcUc",
       authDomain: "wavetravel-3c4c4.firebaseapp.com",
@@ -30,41 +68,95 @@
     const app = initializeApp(firebaseConfig);
     const db = getDatabase(app);
 
-    // Start camera
     const video = document.getElementById('video');
+
+    // Start camera
     navigator.mediaDevices.getUserMedia({ video: true })
       .then(stream => video.srcObject = stream);
 
-    // Load models
+    // Load face-api models
     Promise.all([
       faceapi.nets.tinyFaceDetector.loadFromUri('/models'),
       faceapi.nets.faceLandmark68Net.loadFromUri('/models'),
       faceapi.nets.faceRecognitionNet.loadFromUri('/models')
     ]).then(() => {
-      console.log("Face-api.js models loaded");
+      console.log("Models loaded");
     });
 
-    // Capture button
-    document.getElementById("captureBtn").addEventListener("click", async () => {
-      const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
+    async function captureFaceEncoding() {
+      const detection = await faceapi
+        .detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
         .withFaceLandmarks()
         .withFaceDescriptor();
-
       if (!detection) {
-        alert("No face detected. Please try again.");
-        return;
+        alert("No face detected");
+        return null;
+      }
+      return Array.from(detection.descriptor);
+    }
+
+    function euclideanDistance(arr1, arr2) {
+      return Math.sqrt(arr1.reduce((sum, val, i) => sum + Math.pow(val - arr2[i], 2), 0));
+    }
+
+    // BOOK TICKET
+    document.getElementById("bookBtn").addEventListener("click", async () => {
+      const encoding = await captureFaceEncoding();
+      if (!encoding) return;
+
+      const snapshot = await get(ref(db, "tickets"));
+      let found = false;
+      if (snapshot.exists()) {
+        snapshot.forEach(ticket => {
+          const data = ticket.val();
+          if (data.encoding) {
+            const dist = euclideanDistance(encoding, data.encoding);
+            if (dist < 0.6) {
+              found = true;
+            }
+          }
+        });
       }
 
-      // Get descriptor and convert to array
-      const descriptorArray = Array.from(detection.descriptor);
+      if (found) {
+        alert("Ticket already exists for this person");
+      } else {
+        const newTicketRef = push(ref(db, "tickets"));
+        await set(newTicketRef, {
+          encoding: encoding,
+          amount: 100, // Example amount
+          timestamp: Date.now()
+        });
+        alert("Ticket booked successfully!");
+      }
+    });
 
-      // Save to Firebase (replace with your userId/bookingId)
-      const bookingId = "BOOKING123";
-      await set(ref(db, `faceEncodings/${bookingId}`), {
-        encoding: descriptorArray
-      });
+    // VERIFY TICKET
+    document.getElementById("verifyBtn").addEventListener("click", async () => {
+      const encoding = await captureFaceEncoding();
+      if (!encoding) return;
 
-      alert("Face encoding saved successfully!");
+      const snapshot = await get(ref(db, "tickets"));
+      let found = false;
+      if (snapshot.exists()) {
+        snapshot.forEach(ticket => {
+          const data = ticket.val();
+          if (data.encoding) {
+            const dist = euclideanDistance(encoding, data.encoding);
+            if (dist < 0.6) {
+              found = true;
+            }
+          }
+        });
+      }
+
+      if (found) {
+        video.style.border = "5px solid limegreen";
+        setTimeout(() => video.style.border = "5px solid white", 2000);
+      } else {
+        video.style.border = "5px solid red";
+        setTimeout(() => video.style.border = "5px solid white", 2000);
+      }
     });
   </script>
 </body>
