@@ -2,11 +2,11 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Face Ticketing — Online Only</title>
+  <title>Face Ticketing — Age/Gender/Expression + Firebase</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
     :root{--bg:#071022;--panel:#0b1320;--accent:#10b981;--text:#e6f7f1}
-    body{margin:0;font-family:Inter,Arial;background:var(--bg);color:var(--text);display:flex;align-items:center;justify-content:center;height:100vh}
+    body{margin:0;font-family:Inter,Arial,Helvetica;background:var(--bg);color:var(--text);display:flex;align-items:center;justify-content:center;height:100vh}
     .app{display:flex;gap:18px;width:100%;max-width:1200px;padding:20px;box-sizing:border-box}
     .camera{position:relative;width:720px}
     video{width:720px;height:540px;background:#000;border-radius:10px;object-fit:cover;transform:scaleX(-1)}
@@ -14,12 +14,13 @@
     .panel{width:360px;background:var(--panel);padding:16px;border-radius:10px}
     .btn{width:100%;padding:12px;border-radius:8px;border:none;cursor:pointer;font-weight:700;margin-top:8px}
     .btn-verify{background:#3b82f6;color:#fff}
-    .btn-refresh{background:#f59e0b;color:#012}
+    .btn-generate{background:#10b981;color:#012}
     .status{margin-top:12px;color:#bde;font-size:14px;min-height:46px}
     .small{font-size:13px;color:#9db;margin-top:8px}
-    #datetime{position:absolute;left:12px;top:12px;background:rgba(0,0,0,0.45);padding:8px 10px;border-radius:8px;z-index:20}
+    #datetime{position:absolute;left:12px;top:12px;background:rgba(0,0,0,0.45);padding:8px 10px;border-radius:8px;z-index:20;font-weight:700}
     #message{position:absolute;right:12px;top:12px;z-index:20;text-align:right}
     #message .msg{background:rgba(0,0,0,0.6);padding:6px 10px;border-radius:8px;color:#fff}
+    .meta { font-size:12px; color:#dfe; margin-left:6px; }
   </style>
 </head>
 <body>
@@ -32,10 +33,11 @@
     </div>
 
     <div class="panel">
-      <h3 style="margin:0 0 8px 0">Face Ticket System (Online-only)</h3>
+      <h3 style="margin:0 0 8px 0">Face Ticket System — Online</h3>
 
       <button id="verifyBtn" class="btn btn-verify">Quick Verify (scan now)</button>
-      <button id="refreshBtn" class="btn btn-refresh">Reload Known Faces</button>
+      <button id="generateBtn" class="btn btn-generate">Generate Ticket Now (unknowns)</button>
+      <button id="reloadBtn" class="btn" style="background:#f59e0b">Reload Known Faces</button>
 
       <div class="status" id="status">Loading models...</div>
 
@@ -43,13 +45,15 @@
       <input id="threshold" type="range" min="0.40" max="0.70" step="0.01" value="0.55" style="width:100%" />
 
       <div class="small">Process every N frames: <span id="procVal">2</span></div>
-      <input id="proc" type="range" min="1" max="4" step="1" value="2" style="width:100%" />
+      <input id="proc" type="range" min="1" max="6" step="1" value="2" style="width:100%" />
 
-      <div class="small" style="margin-top:10px">Unknown face held for <b>3s</b> will be auto-saved as a ticket under <code>/faceTickets/{ticketId}</code>.</div>
+      <div class="small" style="margin-top:10px">Unknown face seen continuously for <b>3s</b> will be auto-saved to <code>/faceTickets/{ticketId}</code>.</div>
+
+      <div class="small" style="margin-top:12px">Extras: age, gender, expression are stored per ticket. FPS & known count shown on HUD.</div>
     </div>
   </div>
 
-  <!-- vladmandic face-api (single bundle; includes TF) -->
+  <!-- vladmandic face-api bundle (includes tf backend) -->
   <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.min.js"></script>
 
   <script type="module">
@@ -57,7 +61,7 @@
     import { getDatabase, ref, get, set, child } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-database.js";
 
     // ---------- CONFIG ----------
-    const MODEL_URL = 'https://raw.githubusercontent.com/myselfrakib/Face/main/models'; // change if needed
+    const MODEL_URL = 'https://raw.githubusercontent.com/myselfrakib/Face/main/models'; // your uploaded models location
     const FIREBASE_CONFIG = {
       apiKey: "AIzaSyDsn16p7w8b-x8pEA_WTO5F2oUk4MHwcUc",
       authDomain: "wavetravel-3c4c4.firebaseapp.com",
@@ -79,7 +83,8 @@
     const messageEl = document.getElementById('message');
     const datetimeEl = document.getElementById('datetime');
     const verifyBtn = document.getElementById('verifyBtn');
-    const refreshBtn = document.getElementById('refreshBtn');
+    const generateBtn = document.getElementById('generateBtn');
+    const reloadBtn = document.getElementById('reloadBtn');
     const thresholdInput = document.getElementById('threshold');
     const procInput = document.getElementById('proc');
     const threshVal = document.getElementById('threshVal');
@@ -93,39 +98,42 @@
     procInput.oninput = ()=> { PROCESS_EVERY_N = parseInt(procInput.value,10); procVal.innerText = PROCESS_EVERY_N; };
 
     function setStatus(t){ statusEl.innerText = t; messageEl.innerHTML = `<div class="msg">${t}</div>`; }
-    function setMessage(t, ms=2000){ messageEl.innerHTML = `<div class="msg">${t}</div>`; setTimeout(()=> messageEl.innerHTML='', ms); }
+    function setMessage(t, ms=2200){ messageEl.innerHTML = `<div class="msg">${t}</div>`; if (ms) setTimeout(()=> messageEl.innerHTML='', ms); }
     function updateDateTime(){ datetimeEl.innerText = new Date().toLocaleString(); }
     setInterval(updateDateTime, 1000); updateDateTime();
 
     // ---------- state ----------
     let db;
-    let knownTickets = []; // {id, encoding: Float32Array}
+    let knownTickets = []; // {id, encoding: Float32Array, meta}
     let modelsLoaded = false;
     let frameIdx = 0;
-    const unknownTracker = {}; // key -> {first_seen, last_seen, saving}
+    const unknownTracker = {}; // key -> {first_seen, last_seen, saving, descriptor}
+    let latestDetections = [];
+    let fpsStart = performance.now(), fpsCount = 0, lastFPS = 0;
 
     // ---------- firebase init ----------
     function initFirebase(){
       const app = initializeApp(FIREBASE_CONFIG);
       db = getDatabase(app);
-      setStatus("Firebase initialized");
+      setStatus("Firebase initialized (online-only)");
     }
 
     // ---------- load models ----------
     async function loadModels(){
-      setStatus("Setting TF backend and loading models...");
-      // prefer webgl, fallback to cpu (vladmandic bundle exposes tf)
+      setStatus("Loading models & setting backend...");
       try {
         if (faceapi && faceapi.tf && faceapi.tf.setBackend){
           try { await faceapi.tf.setBackend('webgl'); await faceapi.tf.ready(); }
           catch(e){ await faceapi.tf.setBackend('cpu'); await faceapi.tf.ready(); }
         }
-      } catch(e){ console.warn("backend switch error", e); }
-      // load required models
+      } catch(e){ console.warn("backend select error", e); }
+      // load models you uploaded
       await Promise.all([
         faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
         faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
-        faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
+        faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
+        faceapi.nets.ageGenderNet.loadFromUri(MODEL_URL),
+        faceapi.nets.faceExpressionNet.loadFromUri(MODEL_URL)
       ]);
       modelsLoaded = true;
       setStatus("Models loaded");
@@ -161,12 +169,11 @@
         setStatus(`Loaded ${knownTickets.length} tickets`);
       } catch(e){
         console.error("loadKnownTicketsFromFirebase", e);
-        setStatus("Failed to load tickets (check console)");
+        setStatus("Failed to load tickets (see console)");
       }
     }
 
     async function allocateTicketIdOnline(){
-      // format: MMYYYY + numeric sequence starting at 101
       const now = new Date();
       const prefix = String(now.getMonth()+1).padStart(2,'0') + String(now.getFullYear());
       try {
@@ -178,23 +185,25 @@
         return String(Math.max(...samePrefix) + 1);
       } catch(e){
         console.warn('allocateTicketIdOnline error', e);
-        // fallback simple timestamp-based id if firebase read fails
         return prefix + String(Math.floor(Date.now() / 1000));
       }
     }
 
     async function saveTicketOnline(ticketId, encoding, meta={}){
       const payload = Object.assign({ encoding: Array.from(encoding), timestamp: new Date().toISOString() }, meta);
-      await set(child(ref(db), `${TICKETS_PATH}/${ticketId}`), payload);
-      // update in-memory known list
-      knownTickets.push({ id: ticketId, encoding: new Float32Array(encoding), meta: payload });
-      setStatus(`Saved ${ticketId}`);
+      try {
+        await set(child(ref(db), `${TICKETS_PATH}/${ticketId}`), payload);
+        knownTickets.push({ id: ticketId, encoding: new Float32Array(encoding), meta: payload });
+        setStatus(`Saved ${ticketId}`);
+      } catch(e){
+        console.error("saveTicketOnline error", e);
+        setStatus("Failed to save ticket (see console)");
+      }
     }
 
     // ---------- detection & matching ----------
     async function detectAllSmall(){
       if (!modelsLoaded) return [];
-      // draw small to speed up
       const off = document.createElement('canvas');
       off.width = Math.max(1, Math.floor(video.videoWidth * RESIZE_SCALE));
       off.height = Math.max(1, Math.floor(video.videoHeight * RESIZE_SCALE));
@@ -203,12 +212,17 @@
       try {
         const detections = await faceapi.detectAllFaces(off, new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.45 }))
           .withFaceLandmarks()
-          .withFaceDescriptors();
+          .withFaceDescriptors()
+          .withAgeAndGender()
+          .withFaceExpressions();
         return detections.map(d => {
           const b = d.detection.box;
           return {
             box: { x: Math.round(b.x / RESIZE_SCALE), y: Math.round(b.y / RESIZE_SCALE), width: Math.round(b.width / RESIZE_SCALE), height: Math.round(b.height / RESIZE_SCALE) },
-            descriptor: d.descriptor
+            descriptor: d.descriptor,
+            age: d.age,
+            gender: d.gender,
+            expressions: d.expressions
           };
         });
       } catch(e){
@@ -216,6 +230,8 @@
         return [];
       }
     }
+
+    function euclidean(a,b){ let s=0; for(let i=0;i<a.length;i++){ const d=a[i]-b[i]; s+=d*d;} return Math.sqrt(s); }
 
     function findBestMatchLocal(descriptor){
       if (!knownTickets.length) return { found:false, bestId:null, distance:Infinity };
@@ -227,36 +243,41 @@
       return { found: best.dist <= MATCH_THRESHOLD, bestId: best.id, distance: best.dist };
     }
 
-    function euclidean(a,b){ let s=0; for(let i=0;i<a.length;i++){ const d=a[i]-b[i]; s+=d*d;} return Math.sqrt(s); }
-
     function makeKeyFromDescriptor(enc){
-      // compact key for tracking: round and take first 8 values
       const arr = Array.from(enc).slice(0,8).map(x => Math.round(x*10000)/10000);
       return arr.join(',');
     }
 
-    // ---------- continuous loop & auto-save unknowns ----------
+    // ---------- main loop & auto-save ----------
     async function mainLoop(){
       frameIdx++;
+      fpsCount++;
+      const nowPerf = performance.now();
+      if (nowPerf - fpsStart >= 1000) { lastFPS = fpsCount; fpsCount = 0; fpsStart = nowPerf; }
+
       if (frameIdx % PROCESS_EVERY_N === 0 && modelsLoaded){
         const dets = await detectAllSmall();
-        // update unknown tracker and maybe auto-save
         const nowt = Date.now()/1000;
+
+        // update trackers & maybe auto-save
         for (const d of dets){
           const key = makeKeyFromDescriptor(d.descriptor);
-          const rec = unknownTracker[key] || { first_seen: nowt, last_seen: nowt, saving:false, descriptor: d.descriptor };
+          const rec = unknownTracker[key] || { first_seen: nowt, last_seen: nowt, saving:false, descriptor: d.descriptor, age: d.age, gender: d.gender, expressions: d.expressions };
           rec.last_seen = nowt;
+          rec.descriptor = d.descriptor; // refresh descriptor
+          rec.age = d.age; rec.gender = d.gender; rec.expressions = d.expressions;
           if (!rec.saving){
             const elapsed = rec.last_seen - rec.first_seen;
             if (elapsed >= SAVE_SECONDS){
-              // mark saving and perform online save
               rec.saving = true;
               (async () => {
                 try {
-                  setStatus("Saving unknown face to Firebase...");
+                  setStatus("Auto-saving unknown face...");
                   const ticketId = await allocateTicketIdOnline();
-                  await saveTicketOnline(ticketId, rec.descriptor, { note: 'auto-saved' });
-                  setMessage(`Saved ${ticketId}`, 3000);
+                  // choose dominant expression
+                  const expr = rec.expressions ? Object.keys(rec.expressions).reduce((a,b)=> rec.expressions[a] > rec.expressions[b] ? a : b) : "neutral";
+                  await saveTicketOnline(ticketId, rec.descriptor, { age: Math.round(rec.age), gender: rec.gender, expression: expr });
+                  setMessage(`Auto-saved ${ticketId}`, 3000);
                 } catch(err){
                   console.error("Auto-save failed", err);
                   setStatus("Auto-save failed (see console)");
@@ -267,28 +288,26 @@
           unknownTracker[key] = rec;
         }
 
-        // cleanup old trackers (not seen for 5s)
+        // cleanup old trackers
         for (const k of Object.keys(unknownTracker)){
           if (nowt - unknownTracker[k].last_seen > 5.0 && !unknownTracker[k].saving) delete unknownTracker[k];
         }
 
-        // store latest detections to draw
         latestDetections = dets;
       }
+
       drawOverlay();
       requestAnimationFrame(mainLoop);
     }
 
-    let latestDetections = [];
-
-    // ---------- drawing overlay (not mirrored text) ----------
+    // ---------- draw overlay ----------
     function drawOverlay(){
       ctx.clearRect(0,0,canvas.width,canvas.height);
-      // We want the video mirrored visually, but drawn labels readable.
-      // Since we used CSS transform:scaleX(-1) on video, we must flip our canvas drawing horizontally
       ctx.save();
-      ctx.setTransform(-1, 0, 0, 1, canvas.width, 0); // mirror horizontally
-      // Now draw boxes in same coordinate space as video
+      // mirror horizontally to match mirrored video
+      ctx.setTransform(-1, 0, 0, 1, canvas.width, 0);
+
+      // draw all boxes/dots
       for (const det of latestDetections){
         const b = det.box;
         const match = findBestMatchLocal(det.descriptor);
@@ -296,27 +315,41 @@
           ctx.strokeStyle = 'lime';
           ctx.lineWidth = Math.max(2, Math.round(Math.min(6, b.width*0.02)));
           ctx.strokeRect(b.x, b.y, b.width, b.height);
-          // label background
+          // label with ticket id and meta
           const label = match.bestId;
           ctx.fillStyle = 'rgba(0,128,0,0.85)';
-          const txtW = Math.min(260, ctx.measureText(label).width + 12);
-          ctx.fillRect(b.x, b.y + b.height - 26, txtW, 26);
-          ctx.fillStyle = '#fff'; ctx.font = '16px Arial';
-          ctx.fillText(label, b.x + 6, b.y + b.height - 6);
+          const text = `${label} • ${Math.round(det.age || 0)}y ${det.gender || ''}`;
+          const txtW = Math.min(320, ctx.measureText(text).width + 12);
+          ctx.fillRect(b.x, b.y + b.height - 30, txtW, 30);
+          ctx.fillStyle = '#fff'; ctx.font = '14px Arial';
+          ctx.fillText(text, b.x + 6, b.y + b.height - 10);
         } else {
-          // unknown: draw circle
+          // unknown: circle + small meta (age/gender/expression)
           const cx = b.x + Math.round(b.width/2), cy = b.y + Math.round(b.height/2), r = Math.round(Math.max(b.width,b.height)/2);
           ctx.strokeStyle = 'rgba(255,80,80,0.95)'; ctx.lineWidth = Math.max(2, Math.round(Math.min(6, b.width*0.02)));
           ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.stroke();
-          ctx.fillStyle = 'rgba(200,40,40,0.9)'; ctx.fillRect(b.x, b.y + b.height - 26, 110, 26);
-          ctx.fillStyle = '#fff'; ctx.font = '14px Arial'; ctx.fillText('Unknown', b.x + 6, b.y + b.height - 6);
+
+          const expr = det.expressions ? Object.keys(det.expressions).reduce((a,b)=> det.expressions[a] > det.expressions[b] ? a : b) : 'neutral';
+          const text = `Unknown • ${Math.round(det.age||0)}y ${det.gender||''} ${expr}`;
+          ctx.fillStyle = 'rgba(200,40,40,0.9)';
+          const txtW = Math.min(320, ctx.measureText(text).width + 12);
+          ctx.fillRect(b.x, b.y + b.height - 30, txtW, 30);
+          ctx.fillStyle = '#fff'; ctx.font = '13px Arial'; ctx.fillText(text, b.x + 6, b.y + b.height - 10);
         }
       }
-      ctx.restore(); // restore normal transform for any other drawing (none)
-      updateDateTime();
+
+      ctx.restore(); // restore normal transform
+
+      // HUD (fps & known count)
+      ctx.save();
+      ctx.setTransform(1,0,0,1,0,0);
+      ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(8, canvas.height-36, 220, 28);
+      ctx.fillStyle = '#aef'; ctx.font = '14px Arial';
+      ctx.fillText(`FPS: ${lastFPS}  Known: ${knownTickets.length}`, 14, canvas.height-16);
+      ctx.restore();
     }
 
-    // ---------- UI interactions ----------
+    // ---------- UI actions ----------
     verifyBtn.addEventListener('click', async () => {
       setStatus("Manual verify: scanning...");
       const dets = await detectAllSmall();
@@ -328,7 +361,28 @@
       }
     });
 
-    refreshBtn.addEventListener('click', async () => {
+    generateBtn.addEventListener('click', async () => {
+      if (!latestDetections.length) { setMessage('No faces visible'); return; }
+      // filter unknown detections
+      const unknowns = latestDetections.filter(d => !findBestMatchLocal(d.descriptor).found);
+      if (!unknowns.length){ setMessage('No unknown faces'); return; }
+      setStatus(`Generating ${unknowns.length} ticket(s)...`);
+      for (const d of unknowns){
+        try {
+          const ticketId = await allocateTicketIdOnline();
+          const expr = d.expressions ? Object.keys(d.expressions).reduce((a,b)=> d.expressions[a] > d.expressions[b] ? a : b) : "neutral";
+          await saveTicketOnline(ticketId, d.descriptor, { age: Math.round(d.age), gender: d.gender, expression: expr });
+          setMessage(`Saved ${ticketId}`, 2500);
+        } catch(e){
+          console.error("generateBtn save error", e);
+          setStatus("Error saving ticket (see console)");
+        }
+      }
+      // reload known list
+      await loadKnownTicketsFromFirebase();
+    });
+
+    reloadBtn.addEventListener('click', async () => {
       await loadKnownTicketsFromFirebase();
     });
 
@@ -341,7 +395,6 @@
         await loadKnownTicketsFromFirebase();
         setStatus("Ready (online-only). Auto-save unknowns after 3s.");
         mainLoop();
-        // periodically refresh known tickets
         setInterval(loadKnownTicketsFromFirebase, 60_000);
       } catch(e){
         console.error("Init error:", e);
