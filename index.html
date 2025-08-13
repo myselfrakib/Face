@@ -2,25 +2,24 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Face Ticketing (fixed TF/face-api build)</title>
+  <title>Face Ticketing — Online Only</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
-    :root{--bg:#071022;--panel:#0b1320;--accent:#10b981;--text:#e6f7f1;}
+    :root{--bg:#071022;--panel:#0b1320;--accent:#10b981;--text:#e6f7f1}
     body{margin:0;font-family:Inter,Arial;background:var(--bg);color:var(--text);display:flex;align-items:center;justify-content:center;height:100vh}
     .app{display:flex;gap:18px;width:100%;max-width:1200px;padding:20px;box-sizing:border-box}
-    .camera{position:relative;width:800px}
-    video{width:800px;height:600px;background:#000;border-radius:10px;transform:scaleX(-1);object-fit:cover}
-    canvas{position:absolute;left:0;top:0;width:800px;height:600px;pointer-events:none;transform:scaleX(-1)}
+    .camera{position:relative;width:720px}
+    video{width:720px;height:540px;background:#000;border-radius:10px;object-fit:cover;transform:scaleX(-1)}
+    canvas{position:absolute;left:0;top:0;width:720px;height:540px;pointer-events:none}
     .panel{width:360px;background:var(--panel);padding:16px;border-radius:10px}
     .btn{width:100%;padding:12px;border-radius:8px;border:none;cursor:pointer;font-weight:700;margin-top:8px}
-    .btn-book{background:var(--accent);color:#012}
     .btn-verify{background:#3b82f6;color:#fff}
+    .btn-refresh{background:#f59e0b;color:#012}
     .status{margin-top:12px;color:#bde;font-size:14px;min-height:46px}
     .small{font-size:13px;color:#9db;margin-top:8px}
-    #datetime{position:absolute;left:14px;top:14px;background:rgba(0,0,0,0.45);padding:8px 10px;border-radius:8px;z-index:10}
-    #message{position:absolute;right:14px;top:14px;z-index:10;text-align:right}
+    #datetime{position:absolute;left:12px;top:12px;background:rgba(0,0,0,0.45);padding:8px 10px;border-radius:8px;z-index:20}
+    #message{position:absolute;right:12px;top:12px;z-index:20;text-align:right}
     #message .msg{background:rgba(0,0,0,0.6);padding:6px 10px;border-radius:8px;color:#fff}
-    code{font-size:12px;color:#9fe}
   </style>
 </head>
 <body>
@@ -29,324 +28,330 @@
       <div id="datetime">--</div>
       <div id="message"><div class="msg">Initializing...</div></div>
       <video id="video" autoplay muted playsinline></video>
-      <canvas id="overlay" width="800" height="600"></canvas>
+      <canvas id="overlay" width="720" height="540"></canvas>
     </div>
+
     <div class="panel">
-      <h3 style="margin:0 0 8px 0">Face Ticket System (fixed)</h3>
-      <button id="bookBtn" class="btn btn-book">Book Ticket (scan)</button>
-      <button id="verifyBtn" class="btn btn-verify">Verify Ticket (scan)</button>
+      <h3 style="margin:0 0 8px 0">Face Ticket System (Online-only)</h3>
+
+      <button id="verifyBtn" class="btn btn-verify">Quick Verify (scan now)</button>
+      <button id="refreshBtn" class="btn btn-refresh">Reload Known Faces</button>
+
       <div class="status" id="status">Loading models...</div>
+
       <div class="small">Threshold: <span id="threshVal">0.55</span></div>
       <input id="threshold" type="range" min="0.40" max="0.70" step="0.01" value="0.55" style="width:100%" />
+
       <div class="small">Process every N frames: <span id="procVal">2</span></div>
       <input id="proc" type="range" min="1" max="4" step="1" value="2" style="width:100%" />
-      <div class="small" style="margin-top:10px">Tickets saved to <code>/faceTickets/{ticketId}</code>. Offline backup (localStorage).</div>
+
+      <div class="small" style="margin-top:10px">Unknown face held for <b>3s</b> will be auto-saved as a ticket under <code>/faceTickets/{ticketId}</code>.</div>
     </div>
   </div>
 
-  <!-- Use the vladmandic maintained face-api bundle (compatible with modern TF.js) -->
+  <!-- vladmandic face-api (single bundle; includes TF) -->
   <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.min.js"></script>
 
   <script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js";
-  import { getDatabase, ref, get, set, child } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-database.js";
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js";
+    import { getDatabase, ref, get, set, child } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-database.js";
 
-  // -------- CONFIG (change MODEL_URL if your files are elsewhere) ----------
-  const MODEL_URL = 'https://raw.githubusercontent.com/myselfrakib/Face/main/models';
-  const FIREBASE_CONFIG = {
-    apiKey: "AIzaSyDsn16p7w8b-x8pEA_WTO5F2oUk4MHwcUc",
-    authDomain: "wavetravel-3c4c4.firebaseapp.com",
-    databaseURL: "https://wavetravel-3c4c4-default-rtdb.firebaseio.com",
-    projectId: "wavetravel-3c4c4",
-    storageBucket: "wavetravel-3c4c4.firebasestorage.app",
-    messagingSenderId: "298226098137",
-    appId: "1:298226098137:web:720953b80e3e61c8bc43c8"
-  };
-  const TICKETS_PATH = 'faceTickets';
-  const RESIZE_SCALE = 0.25;
+    // ---------- CONFIG ----------
+    const MODEL_URL = 'https://raw.githubusercontent.com/myselfrakib/Face/main/models'; // change if needed
+    const FIREBASE_CONFIG = {
+      apiKey: "AIzaSyDsn16p7w8b-x8pEA_WTO5F2oUk4MHwcUc",
+      authDomain: "wavetravel-3c4c4.firebaseapp.com",
+      databaseURL: "https://wavetravel-3c4c4-default-rtdb.firebaseio.com",
+      projectId: "wavetravel-3c4c4",
+      storageBucket: "wavetravel-3c4c4.firebasestorage.app",
+      messagingSenderId: "298226098137",
+      appId: "1:298226098137:web:720953b80e3e61c8bc43c8"
+    };
+    const TICKETS_PATH = 'faceTickets';
+    const RESIZE_SCALE = 0.25;
+    const SAVE_SECONDS = 3.0;
 
-  // -------- UI elements ----------
-  const video = document.getElementById('video');
-  const canvas = document.getElementById('overlay');
-  const ctx = canvas.getContext('2d');
-  const statusEl = document.getElementById('status');
-  const msgEl = document.getElementById('message');
-  const datetimeEl = document.getElementById('datetime');
-  const bookBtn = document.getElementById('bookBtn');
-  const verifyBtn = document.getElementById('verifyBtn');
-  const thresholdInput = document.getElementById('threshold');
-  const threshVal = document.getElementById('threshVal');
-  const procInput = document.getElementById('proc');
-  const procVal = document.getElementById('procVal');
+    // ---------- UI ----------
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('overlay');
+    const ctx = canvas.getContext('2d');
+    const statusEl = document.getElementById('status');
+    const messageEl = document.getElementById('message');
+    const datetimeEl = document.getElementById('datetime');
+    const verifyBtn = document.getElementById('verifyBtn');
+    const refreshBtn = document.getElementById('refreshBtn');
+    const thresholdInput = document.getElementById('threshold');
+    const procInput = document.getElementById('proc');
+    const threshVal = document.getElementById('threshVal');
+    const procVal = document.getElementById('procVal');
 
-  // -------- state ----------
-  let db;
-  let knownTickets = []; // {id, encoding:Float32Array}
-  let pendingSaves = loadLocal('pendingSaves') || [];
-  let cachedKnown = loadLocal('knownTicketsCache') || [];
-  let MATCH_THRESHOLD = parseFloat(thresholdInput.value);
-  let PROCESS_EVERY_N = parseInt(procInput.value, 10) || 2;
-  let frameIdx = 0;
-  let modelsLoaded = false;
+    let MATCH_THRESHOLD = parseFloat(thresholdInput.value);
+    let PROCESS_EVERY_N = parseInt(procInput.value,10) || 2;
+    threshVal.innerText = MATCH_THRESHOLD.toFixed(2);
+    procVal.innerText = PROCESS_EVERY_N;
+    thresholdInput.oninput = ()=> { MATCH_THRESHOLD = parseFloat(thresholdInput.value); threshVal.innerText = MATCH_THRESHOLD.toFixed(2); };
+    procInput.oninput = ()=> { PROCESS_EVERY_N = parseInt(procInput.value,10); procVal.innerText = PROCESS_EVERY_N; };
 
-  threshVal.innerText = MATCH_THRESHOLD.toFixed(2);
-  procVal.innerText = PROCESS_EVERY_N;
-  thresholdInput.oninput = ()=> { MATCH_THRESHOLD = parseFloat(thresholdInput.value); threshVal.innerText = MATCH_THRESHOLD.toFixed(2); };
-  procInput.oninput = ()=> { PROCESS_EVERY_N = parseInt(procInput.value,10); procVal.innerText = PROCESS_EVERY_N; };
+    function setStatus(t){ statusEl.innerText = t; messageEl.innerHTML = `<div class="msg">${t}</div>`; }
+    function setMessage(t, ms=2000){ messageEl.innerHTML = `<div class="msg">${t}</div>`; setTimeout(()=> messageEl.innerHTML='', ms); }
+    function updateDateTime(){ datetimeEl.innerText = new Date().toLocaleString(); }
+    setInterval(updateDateTime, 1000); updateDateTime();
 
-  // -------- helpers ----------
-  function updateStatus(t){ statusEl.innerText = t; showMessage(t, 1500); }
-  function showMessage(t, timeout=1500){ msgEl.innerHTML = `<div class="msg">${t}</div>`; clearTimeout(showMessage._t); showMessage._t = setTimeout(()=> msgEl.innerHTML='', timeout); }
-  function saveLocal(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
-  function loadLocal(k){ try{ const s = localStorage.getItem(k); return s? JSON.parse(s): null; } catch(e){ return null; } }
-  function euclidean(a,b){ let s=0; for(let i=0;i<a.length;i++){ const d=a[i]-b[i]; s+=d*d; } return Math.sqrt(s); }
+    // ---------- state ----------
+    let db;
+    let knownTickets = []; // {id, encoding: Float32Array}
+    let modelsLoaded = false;
+    let frameIdx = 0;
+    const unknownTracker = {}; // key -> {first_seen, last_seen, saving}
 
-  // -------- firebase ----------
-  function initFirebase(){
-    const app = initializeApp(FIREBASE_CONFIG);
-    db = getDatabase(app);
-    updateStatus("Firebase ready");
-  }
+    // ---------- firebase init ----------
+    function initFirebase(){
+      const app = initializeApp(FIREBASE_CONFIG);
+      db = getDatabase(app);
+      setStatus("Firebase initialized");
+    }
 
-  // -------- load models safely (vladmandic bundle includes tf) ----------
-  async function loadModels(){
-    updateStatus("Setting backend (webgl preferred)...");
-    try {
-      // vladmandic's bundle exposes tf via faceapi.tf
-      if (faceapi && faceapi.tf && faceapi.tf.setBackend){
-        try {
-          await faceapi.tf.setBackend('webgl');
-          await faceapi.tf.ready();
-          console.log("TF backend:", faceapi.tf.getBackend());
-        } catch(e){
-          console.warn("webgl backend failed, switching to cpu", e);
-          await faceapi.tf.setBackend('cpu');
-          await faceapi.tf.ready();
+    // ---------- load models ----------
+    async function loadModels(){
+      setStatus("Setting TF backend and loading models...");
+      // prefer webgl, fallback to cpu (vladmandic bundle exposes tf)
+      try {
+        if (faceapi && faceapi.tf && faceapi.tf.setBackend){
+          try { await faceapi.tf.setBackend('webgl'); await faceapi.tf.ready(); }
+          catch(e){ await faceapi.tf.setBackend('cpu'); await faceapi.tf.ready(); }
+        }
+      } catch(e){ console.warn("backend switch error", e); }
+      // load required models
+      await Promise.all([
+        faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+        faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+        faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
+      ]);
+      modelsLoaded = true;
+      setStatus("Models loaded");
+    }
+
+    // ---------- camera ----------
+    async function startCamera(){
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { width:1280, height:720 } });
+        video.srcObject = stream;
+        await video.play();
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        setStatus("Camera started");
+      } catch(e){
+        console.error(e);
+        setStatus("Camera access error");
+      }
+    }
+
+    // ---------- db helpers ----------
+    async function loadKnownTicketsFromFirebase(){
+      try {
+        setStatus("Loading known tickets from Firebase...");
+        const snap = await get(ref(db, TICKETS_PATH));
+        const data = snap.exists() ? snap.val() : {};
+        const loaded = [];
+        for (const [k,v] of Object.entries(data || {})){
+          const enc = v.encoding || v.descriptor || null;
+          if (Array.isArray(enc) && enc.length >= 128) loaded.push({ id:k, encoding: new Float32Array(enc), meta:v });
+        }
+        knownTickets = loaded;
+        setStatus(`Loaded ${knownTickets.length} tickets`);
+      } catch(e){
+        console.error("loadKnownTicketsFromFirebase", e);
+        setStatus("Failed to load tickets (check console)");
+      }
+    }
+
+    async function allocateTicketIdOnline(){
+      // format: MMYYYY + numeric sequence starting at 101
+      const now = new Date();
+      const prefix = String(now.getMonth()+1).padStart(2,'0') + String(now.getFullYear());
+      try {
+        const snap = await get(ref(db, TICKETS_PATH));
+        const data = snap.exists() ? snap.val() : {};
+        const keys = Object.keys(data || {});
+        const samePrefix = keys.filter(k => k.startsWith(prefix)).map(k => parseInt(k,10)).filter(n => !isNaN(n));
+        if (!samePrefix.length) return prefix + '101';
+        return String(Math.max(...samePrefix) + 1);
+      } catch(e){
+        console.warn('allocateTicketIdOnline error', e);
+        // fallback simple timestamp-based id if firebase read fails
+        return prefix + String(Math.floor(Date.now() / 1000));
+      }
+    }
+
+    async function saveTicketOnline(ticketId, encoding, meta={}){
+      const payload = Object.assign({ encoding: Array.from(encoding), timestamp: new Date().toISOString() }, meta);
+      await set(child(ref(db), `${TICKETS_PATH}/${ticketId}`), payload);
+      // update in-memory known list
+      knownTickets.push({ id: ticketId, encoding: new Float32Array(encoding), meta: payload });
+      setStatus(`Saved ${ticketId}`);
+    }
+
+    // ---------- detection & matching ----------
+    async function detectAllSmall(){
+      if (!modelsLoaded) return [];
+      // draw small to speed up
+      const off = document.createElement('canvas');
+      off.width = Math.max(1, Math.floor(video.videoWidth * RESIZE_SCALE));
+      off.height = Math.max(1, Math.floor(video.videoHeight * RESIZE_SCALE));
+      const offCtx = off.getContext('2d');
+      offCtx.drawImage(video, 0, 0, off.width, off.height);
+      try {
+        const detections = await faceapi.detectAllFaces(off, new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.45 }))
+          .withFaceLandmarks()
+          .withFaceDescriptors();
+        return detections.map(d => {
+          const b = d.detection.box;
+          return {
+            box: { x: Math.round(b.x / RESIZE_SCALE), y: Math.round(b.y / RESIZE_SCALE), width: Math.round(b.width / RESIZE_SCALE), height: Math.round(b.height / RESIZE_SCALE) },
+            descriptor: d.descriptor
+          };
+        });
+      } catch(e){
+        console.warn("detectAllSmall error", e);
+        return [];
+      }
+    }
+
+    function findBestMatchLocal(descriptor){
+      if (!knownTickets.length) return { found:false, bestId:null, distance:Infinity };
+      let best = { id:null, dist: Infinity };
+      for (const t of knownTickets){
+        const d = euclidean(descriptor, t.encoding);
+        if (d < best.dist) best = { id: t.id, dist: d };
+      }
+      return { found: best.dist <= MATCH_THRESHOLD, bestId: best.id, distance: best.dist };
+    }
+
+    function euclidean(a,b){ let s=0; for(let i=0;i<a.length;i++){ const d=a[i]-b[i]; s+=d*d;} return Math.sqrt(s); }
+
+    function makeKeyFromDescriptor(enc){
+      // compact key for tracking: round and take first 8 values
+      const arr = Array.from(enc).slice(0,8).map(x => Math.round(x*10000)/10000);
+      return arr.join(',');
+    }
+
+    // ---------- continuous loop & auto-save unknowns ----------
+    async function mainLoop(){
+      frameIdx++;
+      if (frameIdx % PROCESS_EVERY_N === 0 && modelsLoaded){
+        const dets = await detectAllSmall();
+        // update unknown tracker and maybe auto-save
+        const nowt = Date.now()/1000;
+        for (const d of dets){
+          const key = makeKeyFromDescriptor(d.descriptor);
+          const rec = unknownTracker[key] || { first_seen: nowt, last_seen: nowt, saving:false, descriptor: d.descriptor };
+          rec.last_seen = nowt;
+          if (!rec.saving){
+            const elapsed = rec.last_seen - rec.first_seen;
+            if (elapsed >= SAVE_SECONDS){
+              // mark saving and perform online save
+              rec.saving = true;
+              (async () => {
+                try {
+                  setStatus("Saving unknown face to Firebase...");
+                  const ticketId = await allocateTicketIdOnline();
+                  await saveTicketOnline(ticketId, rec.descriptor, { note: 'auto-saved' });
+                  setMessage(`Saved ${ticketId}`, 3000);
+                } catch(err){
+                  console.error("Auto-save failed", err);
+                  setStatus("Auto-save failed (see console)");
+                }
+              })();
+            }
+          }
+          unknownTracker[key] = rec;
+        }
+
+        // cleanup old trackers (not seen for 5s)
+        for (const k of Object.keys(unknownTracker)){
+          if (nowt - unknownTracker[k].last_seen > 5.0 && !unknownTracker[k].saving) delete unknownTracker[k];
+        }
+
+        // store latest detections to draw
+        latestDetections = dets;
+      }
+      drawOverlay();
+      requestAnimationFrame(mainLoop);
+    }
+
+    let latestDetections = [];
+
+    // ---------- drawing overlay (not mirrored text) ----------
+    function drawOverlay(){
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      // We want the video mirrored visually, but drawn labels readable.
+      // Since we used CSS transform:scaleX(-1) on video, we must flip our canvas drawing horizontally
+      ctx.save();
+      ctx.setTransform(-1, 0, 0, 1, canvas.width, 0); // mirror horizontally
+      // Now draw boxes in same coordinate space as video
+      for (const det of latestDetections){
+        const b = det.box;
+        const match = findBestMatchLocal(det.descriptor);
+        if (match.found){
+          ctx.strokeStyle = 'lime';
+          ctx.lineWidth = Math.max(2, Math.round(Math.min(6, b.width*0.02)));
+          ctx.strokeRect(b.x, b.y, b.width, b.height);
+          // label background
+          const label = match.bestId;
+          ctx.fillStyle = 'rgba(0,128,0,0.85)';
+          const txtW = Math.min(260, ctx.measureText(label).width + 12);
+          ctx.fillRect(b.x, b.y + b.height - 26, txtW, 26);
+          ctx.fillStyle = '#fff'; ctx.font = '16px Arial';
+          ctx.fillText(label, b.x + 6, b.y + b.height - 6);
+        } else {
+          // unknown: draw circle
+          const cx = b.x + Math.round(b.width/2), cy = b.y + Math.round(b.height/2), r = Math.round(Math.max(b.width,b.height)/2);
+          ctx.strokeStyle = 'rgba(255,80,80,0.95)'; ctx.lineWidth = Math.max(2, Math.round(Math.min(6, b.width*0.02)));
+          ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.stroke();
+          ctx.fillStyle = 'rgba(200,40,40,0.9)'; ctx.fillRect(b.x, b.y + b.height - 26, 110, 26);
+          ctx.fillStyle = '#fff'; ctx.font = '14px Arial'; ctx.fillText('Unknown', b.x + 6, b.y + b.height - 6);
         }
       }
-    } catch(e){
-      console.warn("backend set error", e);
+      ctx.restore(); // restore normal transform for any other drawing (none)
+      updateDateTime();
     }
 
-    updateStatus("Loading models from: " + MODEL_URL);
-    await Promise.all([
-      faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
-      faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
-      faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
-    ]);
-    modelsLoaded = true;
-    updateStatus("Models loaded");
-  }
-
-  // -------- camera ----------
-  async function startCamera(){
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { width:1280, height:720 } });
-      video.srcObject = stream;
-      await video.play();
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      updateStatus("Camera started");
-    } catch(e){
-      console.error(e);
-      updateStatus("Camera access denied");
-    }
-  }
-
-  // -------- DB helpers ----------
-  async function loadKnownTicketsFromFirebase(){
-    try {
-      updateStatus("Loading tickets from Firebase...");
-      const snap = await get(ref(db, TICKETS_PATH));
-      const data = snap.exists() ? snap.val() : {};
-      const loaded = [];
-      for (const [k,v] of Object.entries(data || {})){
-        const enc = v.encoding || v.descriptor || null;
-        if (Array.isArray(enc) && enc.length >= 128) loaded.push({ id:k, encoding: new Float32Array(enc), meta:v });
+    // ---------- UI interactions ----------
+    verifyBtn.addEventListener('click', async () => {
+      setStatus("Manual verify: scanning...");
+      const dets = await detectAllSmall();
+      if (!dets.length){ setStatus("No face detected"); return; }
+      for (const d of dets){
+        const m = findBestMatchLocal(d.descriptor);
+        if (m.found) setMessage(`Ticket: ${m.bestId} (d=${m.distance.toFixed(3)})`, 4000);
+        else setMessage('Unknown', 2000);
       }
-      knownTickets = loaded;
-      saveLocal('knownTicketsCache', loaded.map(x=>({id:x.id, encoding:Array.from(x.encoding), meta:x.meta})));
-      updateStatus(`Loaded ${knownTickets.length} tickets`);
-      return true;
-    } catch(e){
-      console.warn("FB load failed, using cache if available", e);
-      if (cachedKnown && cachedKnown.length){
-        knownTickets = cachedKnown.map(x=>({id:x.id, encoding:new Float32Array(x.encoding), meta:x.meta}));
-        updateStatus(`Loaded ${knownTickets.length} tickets from cache`);
-      } else updateStatus("No tickets available (offline)");
-      return false;
-    }
-  }
+    });
 
-  async function uploadTicketToFirebase(ticketId, descriptor, metadata={}){
-    const payload = Object.assign({ encoding: Array.from(descriptor), timestamp: new Date().toISOString() }, metadata);
-    try {
-      await set(child(ref(db), `${TICKETS_PATH}/${ticketId}`), payload);
-      return true;
-    } catch(e){
-      console.warn("Upload failed", e);
-      return false;
-    }
-  }
-
-  async function allocateTicketId(){
-    const now = new Date();
-    const prefix = String(now.getMonth()+1).padStart(2,'0') + String(now.getFullYear());
-    try {
-      const snap = await get(ref(db, TICKETS_PATH));
-      const data = snap.exists() ? snap.val() : {};
-      const keys = Object.keys(data || {});
-      const matches = keys.filter(k => k.startsWith(prefix));
-      if (!matches.length) return prefix + '101';
-      const nums = matches.map(k => parseInt(k,10)).filter(x=>!isNaN(x));
-      if (!nums.length) return prefix + '101';
-      return String(Math.max(...nums) + 1);
-    } catch(e){
-      return prefix + String(Math.floor(Date.now()/1000));
-    }
-  }
-
-  // -------- detection pipeline ----------
-  async function detectAllDescriptors(){
-    if (!modelsLoaded) return [];
-    const off = document.createElement('canvas');
-    off.width = Math.max(1, Math.floor(video.videoWidth * RESIZE_SCALE));
-    off.height = Math.max(1, Math.floor(video.videoHeight * RESIZE_SCALE));
-    const offCtx = off.getContext('2d');
-    offCtx.drawImage(video, 0, 0, off.width, off.height);
-    try {
-      const detections = await faceapi.detectAllFaces(off, new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.45 }))
-        .withFaceLandmarks()
-        .withFaceDescriptors();
-      return detections.map(d => {
-        const b = d.detection.box;
-        return {
-          box: { x: Math.round(b.x / RESIZE_SCALE), y: Math.round(b.y / RESIZE_SCALE), width: Math.round(b.width / RESIZE_SCALE), height: Math.round(b.height / RESIZE_SCALE) },
-          descriptor: d.descriptor
-        };
-      });
-    } catch(e){
-      console.warn("detect error", e);
-      return [];
-    }
-  }
-
-  function findBestMatch(descriptor){
-    if (!knownTickets.length) return { found:false, bestId:null, distance:Infinity };
-    let best = { id:null, dist: Infinity };
-    for (const t of knownTickets){
-      const d = euclidean(descriptor, t.encoding);
-      if (d < best.dist) best = { id: t.id, dist: d };
-    }
-    return { found: best.dist <= MATCH_THRESHOLD, bestId: best.id, distance: best.dist };
-  }
-
-  // -------- pending uploads flush ----------
-  async function tryFlushPending(){
-    if (!pendingSaves || !pendingSaves.length) return;
-    if (!db) return;
-    const remaining = [];
-    for (const item of pendingSaves){
-      try {
-        const ok = await uploadTicketToFirebase(item.ticketId, new Float32Array(item.encoding), item.meta);
-        if (!ok) remaining.push(item);
-        else knownTickets.push({ id: item.ticketId, encoding: new Float32Array(item.encoding), meta: item.meta });
-      } catch(e){ remaining.push(item); }
-    }
-    pendingSaves = remaining;
-    saveLocal('pendingSaves', pendingSaves);
-    if (!pendingSaves.length) updateStatus("Pending uploads complete");
-  }
-
-  // -------- UI actions ----------
-  bookBtn.addEventListener('click', async () => {
-    updateStatus("Scanning (book)...");
-    const dets = await detectAllDescriptors();
-    if (!dets.length){ updateStatus("No face detected"); return; }
-    for (const d of dets){
-      const match = findBestMatch(d.descriptor);
-      if (match.found){ updateStatus(`Already: ${match.bestId} (d=${match.distance.toFixed(3)})`); continue; }
-      const ticketId = await allocateTicketId();
-      const meta = { amount: 100, note: "auto-book", createdBy: "web" };
-      const ok = await uploadTicketToFirebase(ticketId, d.descriptor, meta);
-      if (!ok){ pendingSaves.push({ ticketId, encoding: Array.from(d.descriptor), meta }); saveLocal('pendingSaves', pendingSaves); updateStatus(`Offline: queued ${ticketId}`); }
-      else { knownTickets.push({ id: ticketId, encoding: new Float32Array(d.descriptor), meta }); saveLocal('knownTicketsCache', knownTickets.map(x=>({id:x.id, encoding:Array.from(x.encoding), meta:x.meta}))); updateStatus(`Saved ${ticketId}`); }
-    }
-    showMessage(`Processed ${dets.length} face(s)`);
-  });
-
-  verifyBtn.addEventListener('click', async () => {
-    updateStatus("Scanning (verify)...");
-    const dets = await detectAllDescriptors();
-    if (!dets.length){ updateStatus("No face detected"); return; }
-    for (const d of dets){
-      const match = findBestMatch(d.descriptor);
-      if (match.found) { updateStatus(`Verified: ${match.bestId} (d=${match.distance.toFixed(3)})`); showMessage(`Ticket: ${match.bestId}`, 3000); }
-      else { updateStatus("No ticket found"); showMessage("Unknown", 2000); }
-    }
-  });
-
-  // -------- draw overlay loop ----------
-  let latestDetections = [];
-  async function drawLoop(){
-    frameIdx++;
-    if (frameIdx % PROCESS_EVERY_N === 0 && modelsLoaded) {
-      latestDetections = await detectAllDescriptors();
-    }
-    ctx.clearRect(0,0,canvas.width,canvas.height);
-    for (const det of latestDetections){
-      const b = det.box;
-      const match = findBestMatch(det.descriptor);
-      if (match.found){
-        ctx.strokeStyle = 'lime'; ctx.lineWidth = Math.max(2, Math.round(Math.min(6, b.width*0.02)));
-        ctx.strokeRect(b.x, b.y, b.width, b.height);
-        ctx.fillStyle = 'rgba(0,128,0,0.85)';
-        const label = match.bestId; ctx.fillRect(b.x, b.y + b.height - 28, Math.min(260, ctx.measureText(label).width + 12), 28);
-        ctx.fillStyle = '#fff'; ctx.font = '16px Arial'; ctx.fillText(label, b.x + 6, b.y + b.height - 8);
-      } else {
-        const cx = b.x + Math.round(b.width/2), cy = b.y + Math.round(b.height/2), r = Math.round(Math.max(b.width,b.height)/2);
-        ctx.strokeStyle = 'rgba(255,80,80,0.95)'; ctx.lineWidth = Math.max(2, Math.round(Math.min(6, b.width*0.02)));
-        ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.stroke();
-        ctx.fillStyle = 'rgba(200,40,40,0.92)'; ctx.fillRect(b.x, b.y + b.height - 28, 110, 28);
-        ctx.fillStyle = '#fff'; ctx.font = '14px Arial'; ctx.fillText('Unknown', b.x + 6, b.y + b.height - 8);
-      }
-    }
-    datetimeEl.innerText = new Date().toLocaleString();
-    requestAnimationFrame(drawLoop);
-  }
-
-  // -------- startup ----------
-  (function preloadCache(){
-    try {
-      const c = loadLocal('knownTicketsCache');
-      if (c && c.length) { cachedKnown = c; knownTickets = c.map(x=>({id:x.id, encoding:new Float32Array(x.encoding), meta:x.meta})); updateStatus(`Loaded ${knownTickets.length} cached tickets`); }
-    } catch(e){}
-  })();
-
-  window.addEventListener('online', async ()=> { updateStatus("Back online - flushing pending..."); await tryFlushPending(); await loadKnownTicketsFromFirebase(); });
-
-  setInterval(tryFlushPending, 30000);
-
-  async function init(){
-    try {
-      initFirebase();
-      await loadModels();
-      await startCamera();
+    refreshBtn.addEventListener('click', async () => {
       await loadKnownTicketsFromFirebase();
-      if (navigator.onLine) await tryFlushPending();
-      updateStatus("Ready");
-      drawLoop();
-      setInterval(loadKnownTicketsFromFirebase, 300000);
-    } catch(err){
-      console.error("Init error", err);
-      updateStatus("Initialization error (see console)");
+    });
+
+    // ---------- init ----------
+    async function init(){
+      try {
+        initFirebase();
+        await loadModels();
+        await startCamera();
+        await loadKnownTicketsFromFirebase();
+        setStatus("Ready (online-only). Auto-save unknowns after 3s.");
+        mainLoop();
+        // periodically refresh known tickets
+        setInterval(loadKnownTicketsFromFirebase, 60_000);
+      } catch(e){
+        console.error("Init error:", e);
+        setStatus("Initialization failed - see console");
+      }
     }
-  }
-  init();
+    init();
 
-  // expose debug
-  window.__faceTicketApp = { knownTickets, pendingSaves };
-
+    // expose for debug
+    window.__faceTickets = { knownTickets, unknownTracker, MATCH_THRESHOLD };
   </script>
 </body>
 </html>
