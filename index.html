@@ -2,34 +2,39 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Multi-person Face Ticketing (manual save)</title>
+  <title>Face Ticketing — clustering, averaging, UI & WebGL</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
     :root { --bg:#071022; --panel:#0b1320; --accent:#10b981; --bad:#ff4d4f; --text:#e6f7f1; }
-    body { margin:0; font-family:Inter, Arial; background:var(--bg); color:var(--text); display:flex; flex-direction:column; align-items:center; min-height:100vh; }
-    header { padding:12px; text-align:center; }
-    #wrap { display:flex; gap:18px; padding:12px; align-items:flex-start; width:100%; max-width:1200px; }
-    #camera { position:relative; width:800px; }
-    video { width:800px; height:600px; background:#000; border-radius:10px; transform: scaleX(-1); /* mirrored for user */ }
-    canvas { position:absolute; left:0; top:0; width:800px; height:600px; pointer-events:none; }
-    #panel { width:360px; background:var(--panel); padding:14px; border-radius:10px; box-shadow:0 8px 30px rgba(0,0,0,0.6); }
-    .btn { width:100%; padding:12px; border-radius:8px; border:none; cursor:pointer; font-weight:700; margin-top:8px; }
-    .btn-primary { background:var(--accent); color:#012; }
-    .btn-verify { background:#3b82f6; color:#fff; }
-    #status { margin-top:10px; color:#bde; font-size:14px; min-height:24px; }
-    .small { font-size:13px; color:#9db; margin-top:8px; }
-    #datetime { position:absolute; left:12px; top:12px; background:rgba(0,0,0,0.45); padding:8px 10px; border-radius:8px; font-weight:700; }
-    #msgs { position:absolute; right:12px; top:12px; text-align:right; }
-    #msgs .msg { background:rgba(0,0,0,0.6); padding:6px 10px; border-radius:8px; margin-bottom:6px; }
-    code { color:#9fe; font-size:12px; }
-    #qrs { margin-top:12px; display:flex; flex-direction:column; gap:8px; align-items:center; }
-    .qr-item { background:#07161a;padding:8px;border-radius:8px;width:100%; text-align:center; color:#9fe; }
+    body{margin:0;font-family:Inter,Arial;background:var(--bg);color:var(--text);display:flex;flex-direction:column;align-items:center;min-height:100vh}
+    header{padding:12px;text-align:center}
+    #wrap{display:flex;gap:18px;padding:12px;align-items:flex-start;width:100%;max-width:1200px;box-sizing:border-box}
+    #camera{position:relative;width:800px}
+    video{width:800px;height:600px;background:#000;border-radius:10px;transform:scaleX(-1);object-fit:cover}
+    canvas{position:absolute;left:0;top:0;width:800px;height:600px;pointer-events:none}
+    #panel{width:360px;background:var(--panel);padding:14px;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,0.6)}
+    .btn{width:100%;padding:12px;border-radius:8px;border:none;cursor:pointer;font-weight:700;margin-top:8px}
+    .btn-primary{background:var(--accent);color:#012}
+    .btn-verify{background:#3b82f6;color:#fff}
+    #status{margin-top:10px;color:#bde;font-size:14px;min-height:24px}
+    .small{font-size:13px;color:#9db;margin-top:8px}
+    #datetime{position:absolute;left:12px;top:12px;background:rgba(0,0,0,0.45);padding:8px 10px;border-radius:8px;font-weight:700;z-index:10}
+    #msgs{position:absolute;right:12px;top:12px;text-align:right;z-index:10}
+    #msgs .msg{background:rgba(0,0,0,0.6);padding:6px 10px;border-radius:8px;margin-bottom:6px}
+    code{color:#9fe;font-size:12px}
+    #list{margin-top:12px;max-height:280px;overflow:auto}
+    .ticket{padding:8px;border-radius:8px;background:#05141a;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}
+    .ticket .id{font-weight:700;color:#9fe}
+    .ticket small{color:#9bb}
+    .controls{display:flex;gap:8px;margin-top:10px}
+    input[type="range"]{width:100%}
+    footer{margin:20px;color:#8da;font-size:13px}
   </style>
 </head>
 <body>
   <header>
-    <h2>Multi-person Face Ticketing — Manual Save</h2>
-    <div style="font-size:13px;color:#9bb">Detects multiple faces, lets you generate tickets for unknowns and stores descriptor under <code>/faceTickets/{ticketId}</code></div>
+    <h2>Face Ticketing — clustering, averaging, UI & WebGL</h2>
+    <div style="font-size:13px;color:#9bb">Place <code>models/</code> next to this page. Auto-save merges into clusters to avoid duplicates.</div>
   </header>
 
   <div id="wrap">
@@ -41,32 +46,48 @@
     </div>
 
     <div id="panel">
-      <button id="generateBtn" class="btn btn-primary">Generate Tickets for Unknowns</button>
-      <button id="verifyBtn" class="btn btn-verify">Quick Verify</button>
+      <button id="autoBtn" class="btn btn-primary">Enable Auto-save (toggle)</button>
+      <div class="controls">
+        <button id="genBtn" class="btn">Generate for unknowns</button>
+        <button id="verifyBtn" class="btn btn-verify">Verify</button>
+      </div>
 
-      <div id="status">Loading models...</div>
+      <div id="status">Initializing...</div>
 
-      <div class="small">Threshold: <span id="threshVal">0.55</span></div>
-      <input id="threshold" type="range" min="0.40" max="0.70" step="0.01" value="0.55" style="width:100%" />
+      <label class="small">Match threshold: <span id="threshVal">0.55</span></label>
+      <input id="threshold" type="range" min="0.40" max="0.70" step="0.01" value="0.55" />
 
-      <div class="small">Samples per unknown (averaging): <span id="sampleVal">5</span></div>
-      <input id="samples" type="range" min="3" max="9" step="2" value="5" style="width:100%" />
+      <label class="small">Samples per unknown (averaging)</label>
+      <input id="samples" type="range" min="3" max="9" step="1" value="5" />
 
-      <div class="small" style="margin-top:10px">New tickets will be saved to <code>/faceTickets/{ticketId}</code> with `encoding` and `timestamp`.</div>
+      <label class="small">Cluster threshold (merge if <=): <span id="clusterVal">0.45</span></label>
+      <input id="cluster" type="range" min="0.30" max="0.60" step="0.01" value="0.45" />
 
-      <div id="qrs"></div>
+      <label class="small">Search tickets</label>
+      <input id="search" placeholder="ticket id or partial" style="width:100%;padding:8px;border-radius:6px;border:none;background:#062; color:#dff; margin-top:6px">
+
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button id="exportCsv" class="btn">Export CSV</button>
+        <button id="refreshList" class="btn">Refresh</button>
+      </div>
+
+      <div id="list"></div>
+      <div class="small" style="margin-top:8px">Tickets saved to <code>/faceTickets/{ticketId}</code>. Offline-data cached and auto-synced.</div>
     </div>
   </div>
 
-  <!-- face-api global -->
-  <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+  <footer>GPU/WebGL backend is used when available (TensorFlow.js). Models must live at <code>./models</code>.</footer>
 
-  <!-- Firebase + logic -->
+  <!-- TensorFlow.js (WebGL backend) -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js"></script>
+  <!-- face-api (global faceapi) -->
+  <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js";
     import { getDatabase, ref, get, set, child } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-database.js";
 
-    // ---------- FIREBASE CONFIG ----------
+    // ========== Firebase config ==========
     const firebaseConfig = {
       apiKey: "AIzaSyDsn16p7w8b-x8pEA_WTO5F2oUk4MHwcUc",
       authDomain: "wavetravel-3c4c4.firebaseapp.com",
@@ -76,77 +97,277 @@
       messagingSenderId: "298226098137",
       appId: "1:298226098137:web:720953b80e3e61c8bc43c8"
     };
-
     const app = initializeApp(firebaseConfig);
     const db = getDatabase(app);
-    const ticketsPath = 'faceTickets';
+    const TICKETS_PATH = 'faceTickets';
 
-    // ---------- UI ----------
+    // ========== UI refs ==========
     const video = document.getElementById('video');
     const canvas = document.getElementById('overlay');
     const ctx = canvas.getContext('2d');
     const statusEl = document.getElementById('status');
     const msgsEl = document.getElementById('msgs');
     const datetimeEl = document.getElementById('datetime');
-    const generateBtn = document.getElementById('generateBtn');
+    const autoBtn = document.getElementById('autoBtn');
+    const genBtn = document.getElementById('genBtn');
     const verifyBtn = document.getElementById('verifyBtn');
-    const qrsEl = document.getElementById('qrs');
-
+    const listEl = document.getElementById('list');
+    const exportCsv = document.getElementById('exportCsv');
+    const refreshList = document.getElementById('refreshList');
+    const searchInput = document.getElementById('search');
     const thresholdInput = document.getElementById('threshold');
     const samplesInput = document.getElementById('samples');
+    const clusterInput = document.getElementById('cluster');
     const threshVal = document.getElementById('threshVal');
-    const sampleVal = document.getElementById('sampleVal');
+    const clusterVal = document.getElementById('clusterVal');
 
     let MATCH_THRESHOLD = parseFloat(thresholdInput.value);
-    thresholdInput.oninput = ()=> { MATCH_THRESHOLD = parseFloat(thresholdInput.value); threshVal.innerText = MATCH_THRESHOLD.toFixed(2); };
+    thresholdInput.oninput = () => { MATCH_THRESHOLD = parseFloat(thresholdInput.value); threshVal.innerText = MATCH_THRESHOLD.toFixed(2); };
 
-    let SAMPLES = parseInt(samplesInput.value,10);
-    samplesInput.oninput = ()=> { SAMPLES = parseInt(samplesInput.value,10); sampleVal.innerText = SAMPLES; };
+    let SAMPLES = parseInt(samplesInput.value, 10);
+    samplesInput.oninput = () => { SAMPLES = parseInt(samplesInput.value, 10); };
 
+    let CLUSTER_THRESHOLD = parseFloat(clusterInput.value);
+    clusterInput.oninput = () => { CLUSTER_THRESHOLD = parseFloat(clusterInput.value); clusterVal.innerText = CLUSTER_THRESHOLD.toFixed(2); };
+
+    // ========== runtime config ==========
     const RESIZE_SCALE = 0.25;
     const PROCESS_EVERY_N = 2;
+    const SAVE_SECONDS = 3.0;
 
-    // ---------- State ----------
-    let knownTickets = []; // [{id, encoding:Float32Array, meta}]
-    let latestDetections = []; // [{box, descriptor}]
+    // state
+    let knownTickets = []; // {id, encoding:Float32Array, meta:{count,...}}
+    let latestDetections = []; // {box, descriptor, score}
+    let unsyncedTickets = []; // stored offline
     let modelsLoaded = false;
+    let autoSaveEnabled = false;
+    let frameIdx = 0;
 
-    // ---------- Helpers ----------
-    function showMsg(text, timeout=2200) {
-      const div = document.createElement('div'); div.className='msg'; div.innerText = text; msgsEl.prepend(div);
-      setTimeout(()=> div.remove(), timeout);
+    // local keys
+    const LOCAL_KNOWN_KEY = 'faceTickets_local';
+    const LOCAL_UNSYNC_KEY = 'faceTickets_unsynced';
+    const LOCAL_COUNTER_PREFIX = 'faceTickets_counter_';
+
+    // helper UI
+    function showMsg(text, timeout=2200){
+      const d = document.createElement('div'); d.className='msg'; d.innerText = text; msgsEl.prepend(d);
+      setTimeout(()=> d.remove(), timeout);
     }
     function updateDateTime(){ datetimeEl.innerText = new Date().toLocaleString(); }
-    setInterval(updateDateTime,1000); updateDateTime();
+    setInterval(updateDateTime, 1000); updateDateTime();
 
-    function euclidean(a,b){
-      let s=0; for (let i=0;i<a.length;i++){ const d=a[i]-b[i]; s+=d*d; } return Math.sqrt(s);
-    }
+    // math helpers
+    function euclidean(a,b){ let s=0; for (let i=0;i<a.length;i++){ const d=a[i]-b[i]; s+=d*d; } return Math.sqrt(s); }
 
-    // ---------- Load known tickets ----------
-    async function loadKnownTickets(){
-      try {
-        statusEl.innerText = 'Loading tickets from Firebase...';
-        const snap = await get(child(ref(db), ticketsPath));
-        const data = snap.exists() ? snap.val() : {};
-        const loaded = [];
-        for (const [k,v] of Object.entries(data)) {
-          const arr = v.encoding || v.descriptor || v.descriptorArray || null;
-          if (Array.isArray(arr) && arr.length >= 128) {
-            loaded.push({ id: k, encoding: new Float32Array(arr), meta: v });
+    // local cache load/save
+    function loadLocalCache(){
+      try{
+        const raw = localStorage.getItem(LOCAL_KNOWN_KEY);
+        knownTickets = [];
+        if (raw){
+          const data = JSON.parse(raw);
+          for (const [id,entry] of Object.entries(data)){
+            if (entry && Array.isArray(entry.encoding) && entry.encoding.length>=128){
+              knownTickets.push({ id, encoding: new Float32Array(entry.encoding), meta: entry.meta || {} });
+            }
           }
         }
-        knownTickets = loaded;
-        statusEl.innerText = `Loaded ${knownTickets.length} ticket(s)`;
-      } catch (e) {
-        console.error("loadKnownTickets:", e);
-        statusEl.innerText = 'Failed to load tickets';
+      }catch(e){ knownTickets=[]; console.warn(e); }
+      try{
+        unsyncedTickets = JSON.parse(localStorage.getItem(LOCAL_UNSYNC_KEY) || '[]');
+      }catch(e){ unsyncedTickets = []; }
+    }
+    function saveLocalCache(){
+      const out = {};
+      for (const t of knownTickets) out[t.id] = { encoding: Array.from(t.encoding), meta: t.meta || {} };
+      localStorage.setItem(LOCAL_KNOWN_KEY, JSON.stringify(out));
+      localStorage.setItem(LOCAL_UNSYNC_KEY, JSON.stringify(unsyncedTickets));
+    }
+
+    // allocate ticket ids
+    async function allocateTicketIds(prefix, count=1){
+      // check local known and unsynced to find next number
+      const nums=[];
+      for (const t of knownTickets) if(t.id && t.id.startsWith(prefix)){ nums.push(parseInt(t.id.slice(prefix.length),10)); }
+      for (const u of unsyncedTickets) if(u.id && u.id.startsWith(prefix)){ nums.push(parseInt(u.id.slice(prefix.length),10)); }
+      let start = nums.length ? Math.max(...nums)+1 : 101;
+      const localKey = LOCAL_COUNTER_PREFIX + prefix;
+      const persisted = parseInt(localStorage.getItem(localKey) || '0', 10);
+      if (persisted >= start) start = persisted+1;
+      const ids = [];
+      for (let i=0;i<count;i++) ids.push(prefix + String(start + i));
+      localStorage.setItem(localKey, String(start + count -1));
+      return ids;
+    }
+
+    // save ticket (with cluster merge support)
+    async function saveOrMerge(encodingArray, meta = {}){
+      // try to merge with existing knownTickets (and unsynced)
+      const enc = new Float32Array(encodingArray);
+      let best = { id: null, dist: Infinity, idx: -1, source: null };
+      for (let i=0;i<knownTickets.length;i++){
+        const d = euclidean(enc, knownTickets[i].encoding);
+        if (d < best.dist){ best = { id: knownTickets[i].id, dist: d, idx:i, source:'known' }; }
+      }
+      for (let i=0;i<unsyncedTickets.length;i++){
+        const d = euclidean(enc, new Float32Array(unsyncedTickets[i].encoding));
+        if (d < best.dist){ best = { id: unsyncedTickets[i].id, dist: d, idx:i, source:'unsynced' }; }
+      }
+
+      if (best.dist <= CLUSTER_THRESHOLD && best.id){
+        // merge into existing
+        if (best.source === 'known'){
+          const existing = knownTickets[best.idx];
+          const prevCount = (existing.meta && existing.meta.count) ? existing.meta.count : 1;
+          // new average = (prev*prevCount + enc) / (prevCount+1)
+          const newEnc = new Float32Array(existing.encoding.length);
+          for (let j=0;j<newEnc.length;j++) newEnc[j] = (existing.encoding[j]*prevCount + enc[j]) / (prevCount + 1);
+          existing.encoding = newEnc;
+          existing.meta = existing.meta || {};
+          existing.meta.count = prevCount + 1;
+          existing.meta.lastUpdated = new Date().toISOString();
+          // attempt to update cloud if online
+          if (navigator.onLine) {
+            try {
+              await set(child(ref(db), `${TICKETS_PATH}/${existing.id}`), { encoding: Array.from(newEnc), timestamp: existing.meta.lastUpdated, meta: existing.meta });
+            } catch (e){
+              // fallback to unsynced
+              unsyncedTickets.push({ id: existing.id, encoding: Array.from(newEnc), timestamp: existing.meta.lastUpdated, meta: existing.meta });
+            }
+          } else {
+            // store unsynced
+            unsyncedTickets.push({ id: existing.id, encoding: Array.from(newEnc), timestamp: existing.meta.lastUpdated, meta: existing.meta });
+          }
+          saveLocalCache();
+          return existing.id;
+        } else {
+          // merge into unsynced entry
+          const entry = unsyncedTickets[best.idx];
+          const prevCount = (entry.meta && entry.meta.count) ? entry.meta.count : 1;
+          const newEnc = new Float32Array(entry.encoding.length);
+          for (let j=0;j<newEnc.length;j++) newEnc[j] = (entry.encoding[j]*prevCount + enc[j]) / (prevCount + 1);
+          entry.encoding = Array.from(newEnc);
+          entry.meta = entry.meta || {};
+          entry.meta.count = prevCount + 1;
+          entry.timestamp = new Date().toISOString();
+          saveLocalCache();
+          return entry.id;
+        }
+      } else {
+        // create new id and save (attempt cloud, fallback offline)
+        const now = new Date();
+        const prefix = String(now.getMonth()+1).padStart(2,'0') + String(now.getFullYear());
+        const ids = await allocateTicketIds(prefix, 1);
+        const id = ids[0];
+        const payload = { encoding: Array.from(enc), timestamp: new Date().toISOString(), meta: { count:1, ...meta } };
+        if (navigator.onLine) {
+          try {
+            await set(child(ref(db), `${TICKETS_PATH}/${id}`), payload);
+            knownTickets.push({ id, encoding: enc, meta: payload.meta });
+            saveLocalCache();
+            return id;
+          } catch (e) {
+            // on failure, save to unsynced
+            unsyncedTickets.push({ id, encoding: payload.encoding, timestamp: payload.timestamp, meta: payload.meta });
+            saveLocalCache();
+            return id;
+          }
+        } else {
+          // offline: store unsynced
+          unsyncedTickets.push({ id, encoding: payload.encoding, timestamp: payload.timestamp, meta: payload.meta });
+          saveLocalCache();
+          return id;
+        }
       }
     }
 
-    // ---------- Model loading & camera ----------
-    async function loadModels(){
-      statusEl.innerText = 'Loading face-api models (from ./models)...';
+    // sync unsynced
+    async function syncUnsynced(){
+      if (!navigator.onLine) return;
+      if (!unsyncedTickets.length) return;
+      showMsg('Syncing offline tickets...',3000);
+      const succeeded=[];
+      for (const t of [...unsyncedTickets]) {
+        try {
+          await set(child(ref(db), `${TICKETS_PATH}/${t.id}`), { encoding: t.encoding, timestamp: t.timestamp, meta: t.meta });
+          knownTickets.push({ id: t.id, encoding: new Float32Array(t.encoding), meta: t.meta });
+          succeeded.push(t.id);
+        } catch (e){ console.warn('sync failed', t.id, e); }
+      }
+      unsyncedTickets = unsyncedTickets.filter(u => !succeeded.includes(u.id));
+      saveLocalCache();
+      if (succeeded.length) showMsg(`Synced ${succeeded.length}`, 3000);
+      refreshListUI();
+    }
+
+    // load tickets from firebase (if online)
+    async function loadTicketsFromFirebase(){
+      if (!navigator.onLine){ statusEl.innerText = 'Offline — using cache'; return; }
+      try{
+        statusEl.innerText = 'Loading tickets from cloud...';
+        const snap = await get(child(ref(db), TICKETS_PATH));
+        const data = snap.exists() ? snap.val() : {};
+        knownTickets = [];
+        for (const [id,entry] of Object.entries(data || {})){
+          if (entry && Array.isArray(entry.encoding) && entry.encoding.length >= 128){
+            knownTickets.push({ id, encoding: new Float32Array(entry.encoding), meta: entry.meta || {} });
+          }
+        }
+        saveLocalCache();
+        statusEl.innerText = `Loaded ${knownTickets.length} tickets`;
+      }catch(e){
+        console.warn(e);
+        statusEl.innerText = 'Failed load from cloud — using cache';
+      }
+      refreshListUI();
+    }
+
+    // create CSV and download
+    function exportCSV(){
+      const rows=[['ticketId','timestamp','meta.count']];
+      const all = [...knownTickets, ...unsyncedTickets.map(s=>({id:s.id, encoding:s.encoding, meta:s.meta || {}}))];
+      for (const t of all){
+        rows.push([t.id, (t.meta && t.meta.lastUpdated) || (t.timestamp || ''), (t.meta && t.meta.count) || '']);
+      }
+      const csv = rows.map(r=>r.map(v=>`"${String(v||'').replace(/"/g,'""')}"`).join(',')).join('\n');
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = 'tickets.csv'; a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    // UI list rendering
+    function refreshListUI(){
+      const q = (searchInput.value || '').trim().toLowerCase();
+      listEl.innerHTML = '';
+      const merged = {}; // id -> {id,meta}
+      for (const t of knownTickets) merged[t.id] = { id: t.id, meta: t.meta || {} };
+      for (const s of unsyncedTickets) merged[s.id] = { id: s.id, meta: s.meta || {} };
+      const arr = Object.values(merged).sort((a,b)=> a.id.localeCompare(b.id));
+      for (const it of arr) {
+        if (q && !it.id.toLowerCase().includes(q) && (!it.meta || !JSON.stringify(it.meta).toLowerCase().includes(q))) continue;
+        const div = document.createElement('div'); div.className = 'ticket';
+        const left = document.createElement('div');
+        left.innerHTML = `<div class="id">${it.id}</div><small>${(it.meta && it.meta.lastUpdated) || ''}</small>`;
+        const right = document.createElement('div');
+        const btn = document.createElement('button'); btn.textContent = 'Details'; btn.className='btn'; btn.style.padding='6px'; btn.onclick = ()=> alert(JSON.stringify(it.meta||{},null,2));
+        right.appendChild(btn);
+        div.appendChild(left); div.appendChild(right);
+        listEl.appendChild(div);
+      }
+    }
+
+    // ========== model & camera setup ==========
+    async function prepareBackendAndModels(){
+      statusEl.innerText = 'Initializing TF backend...';
+      try {
+        // request webgl backend for TF if available
+        await tf.setBackend('webgl');
+        await tf.ready();
+      } catch(e){
+        console.warn('tf webgl init failed, using default backend', e);
+      }
+      statusEl.innerText = 'Loading face-api models (./models)...';
       try {
         await Promise.all([
           faceapi.nets.tinyFaceDetector.loadFromUri('./models'),
@@ -155,88 +376,161 @@
         ]);
         modelsLoaded = true;
         statusEl.innerText = 'Models loaded';
-      } catch (e) {
-        console.error("loadModels error:", e);
-        statusEl.innerText = 'Model load failed - check ./models';
+      } catch (e){
+        console.error('Model load error', e);
+        statusEl.innerText = 'Model load failed — check ./models (console)';
         throw e;
       }
     }
 
     async function startCamera(){
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { width:1280, height:720 }});
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { width:1280, height:720 } });
         video.srcObject = stream;
         await video.play();
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
+        canvas.width = video.videoWidth; canvas.height = video.videoHeight;
         statusEl.innerText = 'Camera started';
-      } catch (e) {
-        console.error("startCamera error:", e);
-        statusEl.innerText = 'Camera access error';
+      } catch(e){
+        console.error('camera start', e);
+        statusEl.innerText = 'Camera error';
+        throw e;
       }
     }
 
-    // ---------- Main loop (multi-face detection & draw) ----------
-    let frameIdx = 0;
+    // improved sampling: use detection.score filtering + outlier removal
+    function elementwiseMedian(arrs){
+      if (!arrs || arrs.length===0) return null;
+      const L = arrs[0].length;
+      const out = new Float32Array(L);
+      for (let j=0;j<L;j++){
+        const col = arrs.map(a=>a[j]).sort((x,y)=>x-y);
+        const m = col[Math.floor(col.length/2)];
+        out[j] = m;
+      }
+      return out;
+    }
+    function distanceToMedian(desc, median){
+      return euclidean(desc, median);
+    }
+
+    async function sampleAverageForBoxes(boxes, samplesPerBox=5, delayMs=150){
+      const accum = boxes.map(()=>[]);
+      for (let s=0;s<samplesPerBox;s++){
+        const off = document.createElement('canvas');
+        off.width = Math.max(1, Math.floor(video.videoWidth * RESIZE_SCALE));
+        off.height = Math.max(1, Math.floor(video.videoHeight * RESIZE_SCALE));
+        const octx = off.getContext('2d'); octx.drawImage(video, 0, 0, off.width, off.height);
+        try {
+          const dets = await faceapi.detectAllFaces(off, new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.45 })).withFaceLandmarks().withFaceDescriptors();
+          const full = dets.map(d=>({box:{x:Math.round(d.detection.box.x/RESIZE_SCALE),y:Math.round(d.detection.box.y/RESIZE_SCALE),width:Math.round(d.detection.box.width/RESIZE_SCALE),height:Math.round(d.detection.box.height/RESIZE_SCALE)},descriptor:d.descriptor,score:d.detection.score}));
+          for (let i=0;i<boxes.length;i++){
+            const tb = boxes[i];
+            let best = {det:null,score:-Infinity};
+            const tcx = tb.x + tb.width/2, tcy = tb.y + tb.height/2;
+            for (const fd of full){
+              const cx = fd.box.x + fd.box.width/2, cy = fd.box.y + fd.box.height/2;
+              const dist = Math.hypot(cx - tcx, cy - tcy);
+              const score = (fd.score || 0) * (1/(1+dist));
+              if (score > best.score) best = {det:fd,score};
+            }
+            if (best.det && best.det.score>=0.35) accum[i].push(best.det.descriptor);
+          }
+        } catch (e) { console.warn('sample detect', e); }
+        await new Promise(r=>setTimeout(r, delayMs));
+      }
+
+      // filter out outliers by distance to median, then average remaining
+      function avgList(list){
+        if (!list || list.length===0) return null;
+        const med = elementwiseMedian(list);
+        const distances = list.map(x=>distanceToMedian(x, med));
+        const meanDist = distances.reduce((a,b)=>a+b,0)/distances.length;
+        // keep descriptors with dist <= 1.5 * meanDist or top 75%
+        const keep = [];
+        for (let i=0;i<list.length;i++){
+          if (distances[i] <= Math.max(0.6, 1.5*meanDist)) keep.push(list[i]);
+        }
+        if (keep.length === 0){
+          // fallback to top 1 descriptor (closest to median)
+          let bestIdx=0; let bestD = Infinity;
+          for (let i=0;i<list.length;i++){
+            if (distances[i] < bestD){ bestD = distances[i]; bestIdx = i; }
+          }
+          return list[bestIdx];
+        }
+        const L = keep[0].length;
+        const out = new Float32Array(L);
+        for (const a of keep) for (let j=0;j<L;j++) out[j] += a[j];
+        for (let j=0;j<L;j++) out[j] /= keep.length;
+        return out;
+      }
+
+      return accum.map(a=>avgList(a));
+    }
+
+    // main loop: detect & draw, autosave if enabled
     async function runLoop(){
       const off = document.createElement('canvas');
       off.width = Math.max(1, Math.floor(video.videoWidth * RESIZE_SCALE));
       off.height = Math.max(1, Math.floor(video.videoHeight * RESIZE_SCALE));
       const offCtx = off.getContext('2d');
 
-      async function step() {
+      async function step(){
         frameIdx++;
         offCtx.drawImage(video, 0, 0, off.width, off.height);
-
-        if (frameIdx % PROCESS_EVERY_N === 0 && modelsLoaded) {
+        if (frameIdx % PROCESS_EVERY_N === 0 && modelsLoaded){
           try {
-            const detections = await faceapi.detectAllFaces(off, new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.45 }))
-              .withFaceLandmarks()
-              .withFaceDescriptors();
-
-            latestDetections = detections.map(d => {
-              const b = d.detection.box;
-              return {
-                box: { x: Math.round(b.x / RESIZE_SCALE), y: Math.round(b.y / RESIZE_SCALE),
-                       width: Math.round(b.width / RESIZE_SCALE), height: Math.round(b.height / RESIZE_SCALE) },
-                descriptor: d.descriptor
-              };
-            });
-          } catch (e) {
-            console.error("detect error:", e);
-          }
+            const dets = await faceapi.detectAllFaces(off, new faceapi.TinyFaceDetectorOptions({ scoreThreshold:0.45 })).withFaceLandmarks().withFaceDescriptors();
+            latestDetections = dets.map(d=>({box:{x: Math.round(d.detection.box.x/RESIZE_SCALE), y:Math.round(d.detection.box.y/RESIZE_SCALE), width:Math.round(d.detection.box.width/RESIZE_SCALE), height:Math.round(d.detection.box.height/RESIZE_SCALE)}, descriptor:d.descriptor, score:d.detection.score}));
+            // handle autosave: find unknown boxes, track persistency & sample + autosave when persistent
+            if (autoSaveEnabled){
+              const nowt = Date.now()/1000;
+              const unknownBoxes = [];
+              for (const det of latestDetections){
+                let bestDist = Infinity;
+                for (const t of knownTickets) { const d = euclidean(det.descriptor, t.encoding); if (d < bestDist) bestDist = d; }
+                if (bestDist > MATCH_THRESHOLD){
+                  unknownBoxes.push(det.box);
+                }
+              }
+              if (unknownBoxes.length){
+                // sample & average immediately for persistent unknowns
+                const averaged = await sampleAverageForBoxes(unknownBoxes, SAMPLES, 120);
+                for (let i=0;i<averaged.length;i++){
+                  const avg = averaged[i];
+                  if (!avg) continue;
+                  // before auto creating, check again if cluster exists (maybe loaded while sampling)
+                  // attempt to merge or create
+                  const id = await saveOrMerge(Array.from(avg), { auto: true, source: 'autosave' });
+                  showMsg(`Auto-saved/merged: ${id}`, 3000);
+                  refreshListUI();
+                }
+              }
+            }
+          } catch (e){ console.warn('loop detect', e); }
         }
 
-        // draw overlay
+        // draw last detections
         ctx.clearRect(0,0,canvas.width,canvas.height);
-        for (const det of latestDetections) {
-          let best = {id:null, dist: Infinity};
-          for (const t of knownTickets) {
-            const d = euclidean(det.descriptor, t.encoding);
-            if (d < best.dist) { best.dist = d; best.id = t.id; }
-          }
-
-          // compute mirrored X so overlay matches mirrored video
+        for (const det of latestDetections){
           const x = det.box.x, y = det.box.y, w = det.box.width, h = det.box.height;
           const mirroredX = canvas.width - x - w;
 
-          if (best.dist <= MATCH_THRESHOLD) {
-            ctx.strokeStyle = 'lime';
-            ctx.lineWidth = Math.max(2, Math.round(Math.min(6, w*0.02)));
+          let best = { id:null, dist: Infinity };
+          for (const t of knownTickets){ const d = euclidean(det.descriptor, t.encoding); if (d < best.dist) best = { id: t.id, dist: d }; }
+
+          if (best.dist <= MATCH_THRESHOLD){
+            ctx.strokeStyle = 'lime'; ctx.lineWidth = Math.max(2, Math.round(Math.min(6, w*0.02)));
             ctx.strokeRect(mirroredX, y, w, h);
-            // label
             ctx.fillStyle = 'rgba(0,128,0,0.85)';
             const label = best.id || 'ticket';
-            const textW = Math.min(260, ctx.measureText(label).width + 12);
+            ctx.font = '16px Arial'; const textW = Math.min(240, ctx.measureText(label).width + 12);
             ctx.fillRect(mirroredX, y + h - 26, textW, 26);
-            ctx.fillStyle = '#fff'; ctx.font = '16px Arial';
-            ctx.fillText(label, mirroredX + 6, y + h - 6);
+            ctx.fillStyle = '#fff'; ctx.fillText(label, mirroredX + 6, y + h - 6);
           } else {
-            // unknown circle
             const cx = mirroredX + Math.round(w/2), cy = y + Math.round(h/2), r = Math.round(Math.max(w,h)/2);
-            ctx.strokeStyle = 'rgba(255,50,50,0.95)'; ctx.lineWidth = Math.max(2, Math.round(Math.min(6, w*0.02)));
+            ctx.strokeStyle = 'rgba(255,50,50,0.95)'; ctx.lineWidth = Math.max(2, Math.round(Math.min(6,w*0.02)));
             ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.stroke();
-            // label
             ctx.fillStyle = 'rgba(200,40,40,0.9)'; ctx.fillRect(mirroredX, y + h - 26, 110, 26);
             ctx.fillStyle = '#fff'; ctx.font = '14px Arial'; ctx.fillText('Unknown', mirroredX + 6, y + h - 6);
           }
@@ -248,185 +542,82 @@
       requestAnimationFrame(step);
     }
 
-    // ---------- Helpers for sampling & averaging ----------
-    async function sampleAverageForBoxes(boxes, samplesPerBox=5, delayMs = 200) {
-      const accum = boxes.map(() => []);
-      for (let s=0; s<samplesPerBox; s++) {
-        const off = document.createElement('canvas');
-        off.width = Math.max(1, Math.floor(video.videoWidth * RESIZE_SCALE));
-        off.height = Math.max(1, Math.floor(video.videoHeight * RESIZE_SCALE));
-        const offCtx = off.getContext('2d');
-        offCtx.drawImage(video, 0, 0, off.width, off.height);
-        const dets = await faceapi.detectAllFaces(off, new faceapi.TinyFaceDetectorOptions({ scoreThreshold:0.45 }))
-          .withFaceLandmarks()
-          .withFaceDescriptors();
-        const fullDets = dets.map(d => {
-          const b = d.detection.box;
-          return { box: { x: Math.round(b.x / RESIZE_SCALE), y: Math.round(b.y / RESIZE_SCALE),
-                          width: Math.round(b.width / RESIZE_SCALE), height: Math.round(b.height / RESIZE_SCALE) },
-                   descriptor: d.descriptor };
-        });
-
-        for (let i=0;i<boxes.length;i++){
-          const tb = boxes[i];
-          let best={det:null,score:-Infinity};
-          const tcx = tb.x + tb.width/2, tcy = tb.y + tb.height/2;
-          for (const fd of fullDets) {
-            const cx = fd.box.x + fd.box.width/2, cy = fd.box.y + fd.box.height/2;
-            const dist = Math.hypot(cx - tcx, cy - tcy);
-            const score = 1/(1+dist);
-            if (score > best.score) best = {det: fd, score};
-          }
-          if (best.det) accum[i].push(best.det.descriptor);
-        }
-        await new Promise(r => setTimeout(r, delayMs));
-      }
-
-      function avg(list) {
-        if (!list || list.length===0) return null;
-        const L = list[0].length;
-        const out = new Float32Array(L);
-        for (const a of list) for (let j=0;j<L;j++) out[j] += a[j];
-        for (let j=0;j<L;j++) out[j] /= list.length;
-        return out;
-      }
-      return accum.map(lst => avg(lst));
-    }
-
-    // ---------- ticket-id allocator (single definition, updated) ----------
-    async function allocateTicketIds(prefix, count) {
-      /**
-       * prefix: "MMYYYY" e.g. "082025"
-       * returns array of string ids like "082025101","082025102",...
-       */
-      try {
-        const snap = await get(child(ref(db), ticketsPath));
-        const data = snap.exists() ? snap.val() : {};
-        // find highest numeric suffix for keys that start with prefix
-        let maxSuffix = 100; // so first will be 101
-        for (const key of Object.keys(data || {})) {
-          if (typeof key === 'string' && key.startsWith(prefix)) {
-            const suffix = key.slice(prefix.length);
-            const n = parseInt(suffix, 10);
-            if (!isNaN(n) && n > maxSuffix) maxSuffix = n;
-          }
-        }
-        const out = [];
-        for (let i = 1; i <= count; i++) {
-          const newSuffix = maxSuffix + i; // numeric increment
-          out.push(prefix + String(newSuffix)); // e.g. "082025101"
-        }
-        return out;
-      } catch (e) {
-        console.error("allocateTicketIds error:", e);
-        // fallback: create sequential suffixes starting at 101
-        const start = 101;
-        const out = [];
-        for (let i = 0; i < count; i++) out.push(prefix + String(start + i));
-        return out;
-      }
-    }
-
-    // ---------- Generate tickets for current unknown faces ----------
-    generateBtn.addEventListener('click', async () => {
-      if (!modelsLoaded) { showMsg('Models still loading'); return; }
+    // manual generate (capture unknowns and save)
+    genBtn.addEventListener('click', async ()=>{
+      if (!modelsLoaded) { showMsg('Models loading...'); return; }
       if (!latestDetections || latestDetections.length===0) { showMsg('No faces visible'); return; }
 
-      // collect boxes of unknown faces
+      // collect unknown boxes from latestDetections
       const unknownBoxes = [];
-      for (const det of latestDetections) {
-        let best = { dist: Infinity };
-        for (const t of knownTickets) {
-          const d = euclidean(det.descriptor, t.encoding);
-          if (d < best.dist) best = { dist: d, id: t.id };
-        }
-        if (best.dist > MATCH_THRESHOLD) {
-          unknownBoxes.push(det.box);
-        }
+      for (const det of latestDetections){
+        let best = Infinity;
+        for (const t of knownTickets){ const d = euclidean(det.descriptor, t.encoding); if (d < best) best = d; }
+        if (best > MATCH_THRESHOLD) unknownBoxes.push(det.box);
       }
-
-      if (unknownBoxes.length === 0) { showMsg('No unknown faces'); return; }
-
+      if (unknownBoxes.length===0){ showMsg('No unknowns'); return; }
       statusEl.innerText = `Capturing ${SAMPLES} samples for ${unknownBoxes.length} unknown(s)...`;
-      showMsg(`Capturing ${unknownBoxes.length} unknown(s)`);
-
-      const averaged = await sampleAverageForBoxes(unknownBoxes, SAMPLES);
-      const valid = averaged.map((v,i) => ({avg:v, box:unknownBoxes[i]})).filter(x => x.avg !== null);
-      if (valid.length === 0) { showMsg('Capture failed'); statusEl.innerText = 'Capture failed'; return; }
-
-      // allocate ids using MMYYYY prefix
-      const now = new Date();
-      const prefix = String(now.getMonth()+1).padStart(2,'0') + String(now.getFullYear());
-      const ids = await allocateTicketIds(prefix, valid.length);
-
-      // save to Firebase under /faceTickets/{ticketId}
-      const saved = [];
-      for (let i=0;i<valid.length;i++){
-        const id = ids[i];
-        const desc = Array.from(valid[i].avg);
-        const payload = { encoding: desc, timestamp: new Date().toISOString() };
-        try {
-          await set(child(ref(db), `${ticketsPath}/${id}`), payload);
-          saved.push(id);
-        } catch (e) {
-          console.error("save ticket error", e);
-        }
+      const averaged = await sampleAverageForBoxes(unknownBoxes, SAMPLES, 140);
+      const valid = averaged.map((v,i)=>({avg:v,box:unknownBoxes[i]})).filter(x=>x.avg !== null);
+      if (valid.length===0){ showMsg('Capture failed'); statusEl.innerText='Capture failed'; return; }
+      const saved=[];
+      for (const v of valid){
+        const id = await saveOrMerge(Array.from(v.avg), { generatedBy:'manual', savedAt: new Date().toISOString() });
+        saved.push(id);
+        showMsg(`Saved ${id}`, 1800);
       }
-
-      if (saved.length) {
-        showMsg(`Saved ${saved.length} ticket(s)`, 3000);
-        statusEl.innerText = `Saved: ${saved.join(', ')}`;
-        qrsEl.innerHTML = '';
-        for (const tid of saved) {
-          const div = document.createElement('div'); div.className='qr-item';
-          const url = `${location.origin}/ticket.html?ticket=${encodeURIComponent(tid)}`;
-          div.innerHTML = `<div style="font-weight:700">${tid}</div>
-            <img alt="qr" src="https://chart.googleapis.com/chart?cht=qr&chs=150x150&chl=${encodeURIComponent(url)}" style="margin-top:8px;border-radius:6px" />`;
-          qrsEl.prepend(div);
-        }
-        // reload known tickets to include newly saved
-        await loadKnownTickets();
-      } else {
-        showMsg('No tickets saved (error)', 3000);
-        statusEl.innerText = 'Save error';
-      }
+      refreshListUI();
     });
 
-    // ---------- quick verify (single-shot) ----------
-    verifyBtn.addEventListener('click', async () => {
+    // quick verify snapshot; display matched ticket id(s)
+    verifyBtn.addEventListener('click', async ()=>{
       if (!modelsLoaded) { showMsg('Models loading'); return; }
-      if (!latestDetections || latestDetections.length===0) { showMsg('No faces visible'); return; }
-      let found = 0;
-      let info = [];
-      for (const det of latestDetections) {
-        let best = { id:null, dist: Infinity };
-        for (const t of knownTickets) {
-          const d = euclidean(det.descriptor, t.encoding);
-          if (d < best.dist) best = { id: t.id, dist: d };
-        }
-        if (best.dist <= MATCH_THRESHOLD) { found++; info.push(`${best.id} (d=${best.dist.toFixed(3)})`); }
-        else info.push(`Unknown (best ${best.id || 'none'} d=${best.dist.toFixed(3)})`);
+      if (!latestDetections || latestDetections.length===0) { showMsg('No faces'); return; }
+      const infos=[];
+      for (const det of latestDetections){
+        let best = {id:null,dist:Infinity};
+        for (const t of knownTickets){ const d = euclidean(det.descriptor, t.encoding); if (d < best.dist) best = {id:t.id,dist:d}; }
+        if (best.dist <= MATCH_THRESHOLD) infos.push(`${best.id} (d=${best.dist.toFixed(3)})`);
+        else infos.push(`Unknown (best ${best.id||'none'} d=${best.dist.toFixed(3)})`);
       }
-      showMsg(`Verified ${found}/${latestDetections.length}`, 3000);
-      statusEl.innerText = info.join(' | ');
+      showMsg(`Verify: ${infos.join(' | ')}`, 4000);
     });
 
-    // ---------- init ----------
+    // CSV export & refresh
+    exportCsv.addEventListener('click', exportCSV);
+    refreshList.addEventListener('click', ()=>{ loadTicketsFromFirebase(); });
+
+    // search
+    searchInput.addEventListener('input', refreshListUI);
+
+    // auto toggle
+    autoBtn.addEventListener('click', ()=>{ autoSaveEnabled = !autoSaveEnabled; autoBtn.textContent = autoSaveEnabled ? 'Auto-save: ON (click to stop)' : 'Enable Auto-save (toggle)'; });
+
+    // network sync
+    window.addEventListener('online', async ()=>{ showMsg('Back online — syncing...',3000); await syncUnsynced(); await loadTicketsFromFirebase(); });
+    window.addEventListener('offline', ()=>{ showMsg('Offline — working from cache',3000); statusEl.innerText='Offline'; });
+
+    // init sequence
     async function init(){
-      try {
-        await loadModels();
+      try{
+        loadLocalCache();
+        statusEl.innerText = 'Preparing backend & models...';
+        await prepareBackendAndModels();
         await startCamera();
-        await loadKnownTickets();
-        setInterval(loadKnownTickets, 30000);
+        // initial load: cloud or cache
+        if (navigator.onLine) { await loadTicketsFromFirebase(); await syncUnsynced(); } else { statusEl.innerText = `Offline — ${knownTickets.length} cached`; }
+        // populate list
+        refreshListUI();
+        // start detection loop
         runLoop();
-      } catch (e) {
-        console.error("Init error:", e);
-      }
+        // periodic refresh
+        setInterval(async ()=>{ if (navigator.onLine) await loadTicketsFromFirebase(); }, 30000);
+      }catch(e){ console.error('init error', e); statusEl.innerText = 'Init failed — see console'; }
     }
+
     init();
 
-    // debugging
-    window.__faceTickets = { loadKnownTickets, knownTickets, latestDetections };
+    // expose for debugging
+    window.__faceTickets = { knownTickets, unsyncedTickets, loadLocalCache, saveLocalCache, saveOrMerge };
 
   </script>
 </body>
