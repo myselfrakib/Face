@@ -52,7 +52,7 @@
       <div class="small">Samples per unknown (averaging): <span id="sampleVal">5</span></div>
       <input id="samples" type="range" min="3" max="9" step="2" value="5" style="width:100%" />
 
-      <div class="small" style="margin-top:10px">New tickets will be saved to <code>/faceTickets/{ticketId}</code> with `descriptor` and `timestamp`.</div>
+      <div class="small" style="margin-top:10px">New tickets will be saved to <code>/faceTickets/{ticketId}</code> with `encoding` and `timestamp`.</div>
 
       <div id="qrs"></div>
     </div>
@@ -249,9 +249,7 @@
     }
 
     // ---------- Helpers for sampling & averaging ----------
-    // sampleAverageForBoxes: for each box, resample SAMPLES times and average descriptors
     async function sampleAverageForBoxes(boxes, samplesPerBox=5, delayMs = 200) {
-      // boxes: array of {x,y,width,height} in full coords (the detection boxes)
       const accum = boxes.map(() => []);
       for (let s=0; s<samplesPerBox; s++) {
         const off = document.createElement('canvas');
@@ -269,7 +267,6 @@
                    descriptor: d.descriptor };
         });
 
-        // for each target box, choose the detection nearest to its center
         for (let i=0;i<boxes.length;i++){
           const tb = boxes[i];
           let best={det:null,score:-Infinity};
@@ -285,7 +282,6 @@
         await new Promise(r => setTimeout(r, delayMs));
       }
 
-      // average lists
       function avg(list) {
         if (!list || list.length===0) return null;
         const L = list[0].length;
@@ -297,22 +293,37 @@
       return accum.map(lst => avg(lst));
     }
 
-    // ---------- ticket-id allocator (single definition) ----------
+    // ---------- ticket-id allocator (single definition, updated) ----------
     async function allocateTicketIds(prefix, count) {
-      // prefix: MMYYYY as string, e.g. "082025". returns array of count string ids.
+      /**
+       * prefix: "MMYYYY" e.g. "082025"
+       * returns array of string ids like "082025101","082025102",...
+       */
       try {
         const snap = await get(child(ref(db), ticketsPath));
         const data = snap.exists() ? snap.val() : {};
-        const existing = Object.keys(data || {}).filter(k => k.startsWith(prefix));
-        const nums = existing.map(k => parseInt(k, 10)).filter(x => !isNaN(x));
-        let next = nums.length ? Math.max(...nums) + 1 : parseInt(prefix + '101', 10);
+        // find highest numeric suffix for keys that start with prefix
+        let maxSuffix = 100; // so first will be 101
+        for (const key of Object.keys(data || {})) {
+          if (typeof key === 'string' && key.startsWith(prefix)) {
+            const suffix = key.slice(prefix.length);
+            const n = parseInt(suffix, 10);
+            if (!isNaN(n) && n > maxSuffix) maxSuffix = n;
+          }
+        }
         const out = [];
-        for (let i=0;i<count;i++){ out.push(String(next)); next++; }
+        for (let i = 1; i <= count; i++) {
+          const newSuffix = maxSuffix + i; // numeric increment
+          out.push(prefix + String(newSuffix)); // e.g. "082025101"
+        }
         return out;
       } catch (e) {
         console.error("allocateTicketIds error:", e);
-        const base = parseInt(prefix + '101', 10);
-        return Array.from({length: count}, (_,i) => String(base + i));
+        // fallback: create sequential suffixes starting at 101
+        const start = 101;
+        const out = [];
+        for (let i = 0; i < count; i++) out.push(prefix + String(start + i));
+        return out;
       }
     }
 
@@ -340,11 +351,10 @@
       showMsg(`Capturing ${unknownBoxes.length} unknown(s)`);
 
       const averaged = await sampleAverageForBoxes(unknownBoxes, SAMPLES);
-      // filter valid averaged descriptors
       const valid = averaged.map((v,i) => ({avg:v, box:unknownBoxes[i]})).filter(x => x.avg !== null);
       if (valid.length === 0) { showMsg('Capture failed'); statusEl.innerText = 'Capture failed'; return; }
 
-      // allocate ids
+      // allocate ids using MMYYYY prefix
       const now = new Date();
       const prefix = String(now.getMonth()+1).padStart(2,'0') + String(now.getFullYear());
       const ids = await allocateTicketIds(prefix, valid.length);
