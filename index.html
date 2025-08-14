@@ -2,27 +2,36 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Face Ticketing — Full Models</title>
+  <title>Face Ticketing — Enhanced</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
     :root{--bg:#071022;--panel:#0b1320;--accent:#10b981;--text:#e6f7f1}
     body{margin:0;font-family:Inter,Arial;background:var(--bg);color:var(--text);display:flex;align-items:center;justify-content:center;min-height:100vh}
-    .wrap{width:100%;max-width:980px;padding:18px;box-sizing:border-box}
-    .camera-area{display:flex;flex-direction:column;align-items:center;gap:12px}
-    .video-box{position:relative;width:760px}
-    video{width:760px;height:570px;background:#000;border-radius:10px;object-fit:cover;transform:scaleX(-1); /* mirrored */}
-    canvas{position:absolute;left:0;top:0;width:760px;height:570px;pointer-events:none}
+    .wrap{width:100%;max-width:1100px;padding:18px;box-sizing:border-box}
+    .camera-area{display:flex;gap:16px;align-items:flex-start}
+    .video-box{position:relative;width:740px}
+    video{width:740px;height:555px;background:#000;border-radius:8px;object-fit:cover;transform:scaleX(-1)}
+    canvas{position:absolute;left:0;top:0;width:740px;height:555px;pointer-events:none}
     #datetime{position:absolute;left:12px;top:12px;background:rgba(0,0,0,0.45);padding:8px 10px;border-radius:8px;z-index:30}
     #msg{position:absolute;right:12px;top:12px;z-index:30;text-align:right}
     #msg .m{background:rgba(0,0,0,0.6);padding:6px 10px;border-radius:8px}
-    .controls{display:flex;gap:12px;justify-content:center;margin-top:6px}
-    button{padding:12px 18px;border-radius:8px;border:none;font-weight:700;cursor:pointer}
+    .controls{display:flex;gap:10px;justify-content:center;margin-top:10px}
+    button{padding:10px 14px;border-radius:8px;border:none;font-weight:700;cursor:pointer}
     .btn-gen{background:var(--accent);color:#012}
     .btn-verify{background:#3b82f6;color:#fff}
     .btn-refresh{background:#f59e0b;color:#012}
-    .info-panel{margin-top:14px;background:var(--panel);padding:12px;border-radius:10px}
+    .panel{width:320px;background:var(--panel);padding:12px;border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,0.6)}
+    .panel h3{margin:0 0 8px 0}
     .small{font-size:13px;color:#9db}
     input[type=range]{width:100%}
+    .tickets-list{margin-top:10px;max-height:320px;overflow:auto}
+    .ticket-item{padding:8px;border-radius:6px;background:rgba(255,255,255,0.02);margin-bottom:8px}
+    .ticket-item input{width:100%;padding:6px;border-radius:4px;border:none;background:rgba(0,0,0,0.15);color:#fff}
+    .ticket-row{display:flex;gap:8px;align-items:center}
+    .qr{height:64px;width:64px;border-radius:6px;background:#000;display:inline-block}
+    .saving-overlay{position:absolute;left:0;top:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.45);z-index:80;border-radius:8px}
+    .saving-overlay .spinner{border:6px solid rgba(255,255,255,0.08);border-top:6px solid #fff;border-radius:50%;width:48px;height:48px;animation:spin 1s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
   </style>
 </head>
 <body>
@@ -32,36 +41,48 @@
         <div id="datetime">--</div>
         <div id="msg"><div class="m">Initializing...</div></div>
         <video id="video" autoplay muted playsinline></video>
-        <canvas id="overlay" width="760" height="570"></canvas>
+        <canvas id="overlay" width="740" height="555"></canvas>
+        <div id="saving" class="saving-overlay" style="display:none">
+          <div>
+            <div class="spinner"></div>
+            <div style="text-align:center;margin-top:8px">Processing...</div>
+          </div>
+        </div>
+        <div class="controls" style="position:relative;top:8px;left:0;width:100%;justify-content:center">
+          <button id="generateBtn" class="btn-gen">Generate Tickets</button>
+          <button id="verifyBtn" class="btn-verify">Verify Now</button>
+          <button id="refreshBtn" class="btn-refresh">Reload Known Faces</button>
+        </div>
       </div>
 
-      <div class="controls" role="toolbar" aria-label="controls">
-        <button id="generateBtn" class="btn-gen">Generate Tickets for Unknowns</button>
-        <button id="verifyBtn" class="btn-verify">Verify Now</button>
-        <button id="refreshBtn" class="btn-refresh">Reload Known Faces</button>
-      </div>
-
-      <div class="info-panel">
-        <div><strong id="status">Loading models...</strong></div>
+      <div class="panel">
+        <h3>Tickets & Controls</h3>
+        <div id="status">Loading models...</div>
         <div class="small">Threshold: <span id="threshVal">0.55</span></div>
         <input id="threshold" type="range" min="0.40" max="0.70" step="0.01" value="0.55" />
-        <div class="small" style="margin-top:8px">Process every N frames: <span id="procVal">2</span></div>
+        <div class="small">Process every N frames: <span id="procVal">2</span></div>
         <input id="proc" type="range" min="1" max="4" step="1" value="2" />
-        <div class="small" style="margin-top:8px">Samples per unknown during Generate: <span id="samplesVal">5</span></div>
+        <div class="small">Samples per unknown: <span id="samplesVal">5</span></div>
         <input id="samples" type="range" min="3" max="9" step="2" value="5" />
-        <div class="small" style="margin-top:8px">Saved ticket records contain: encoding(128 floats), age_estimate, gender, genderProbability, topExpression, timestamp.</div>
+        <div style="margin-top:8px" class="small">Saved ticket contains <code>encoding</code> (128 floats, normalized), <code>name</code>, <code>age_estimate</code>, <code>gender</code>, <code>topExpression</code>, <code>timestamp</code>.</div>
+
+        <div class="tickets-list" id="ticketsList"></div>
+
+        <div style="margin-top:8px">
+          <button id="downloadJson" style="background:#0ea5a4;color:#012;padding:8px;border-radius:6px;width:100%">Download Tickets JSON</button>
+        </div>
       </div>
     </div>
   </div>
 
-  <!-- use vladmandic bundle (includes tf backend) -->
+  <!-- face-api vladmandic bundle -->
   <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.min.js"></script>
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js";
-    import { getDatabase, ref, get, set, child } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-database.js";
+    import { getDatabase, ref, get, set, child, update } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-database.js";
 
-    // ---------- CONFIG (adjust MODEL_URL if needed) ----------
+    // ---------- CONFIG ----------
     const MODEL_URL = 'https://raw.githubusercontent.com/myselfrakib/Face/main/models';
     const FIREBASE_CONFIG = {
       apiKey: "AIzaSyDsn16p7w8b-x8pEA_WTO5F2oUk4MHwcUc",
@@ -85,6 +106,10 @@
     const generateBtn = document.getElementById('generateBtn');
     const verifyBtn = document.getElementById('verifyBtn');
     const refreshBtn = document.getElementById('refreshBtn');
+    const ticketsList = document.getElementById('ticketsList');
+    const downloadJson = document.getElementById('downloadJson');
+    const savingOverlay = document.getElementById('saving');
+
     const thresholdInput = document.getElementById('threshold');
     const procInput = document.getElementById('proc');
     const samplesInput = document.getElementById('samples');
@@ -134,6 +159,7 @@
         }
         knownTickets = loaded;
         setStatus(`Loaded ${knownTickets.length} tickets`);
+        renderTicketsList();
       } catch(e){
         console.error("loadKnownTicketsFromFirebase", e);
         setStatus("Failed to load tickets (see console)");
@@ -162,8 +188,21 @@
         timestamp: new Date().toISOString()
       }, meta);
       await set(child(ref(db), `${TICKETS_PATH}/${ticketId}`), payload);
+      // update knownTickets in memory
       knownTickets.push({ id: ticketId, encoding: new Float32Array(encoding), meta: payload });
+      renderTicketsList();
       setStatus(`Saved ${ticketId}`);
+    }
+
+    async function updateTicketMeta(ticketId, meta){
+      try {
+        await update(child(ref(db), `${TICKETS_PATH}/${ticketId}`), meta);
+        setMessage(`Saved meta ${ticketId}`, 2000);
+        await loadKnownTicketsFromFirebase();
+      } catch(e){
+        console.error("updateTicketMeta", e);
+        setMessage("Save failed (console)", 2500);
+      }
     }
 
     // ---------- models & camera ----------
@@ -200,6 +239,19 @@
       }
     }
 
+    // ---------- descriptors helpers ----------
+    function l2normalizeFloat32(arr){
+      // arr: Float32Array or array-like length 128
+      const a = (arr instanceof Float32Array) ? arr : new Float32Array(arr);
+      let sum = 0;
+      for (let i=0;i<a.length;i++) sum += a[i]*a[i];
+      const norm = Math.sqrt(sum) || 1;
+      const out = new Float32Array(a.length);
+      for (let i=0;i<a.length;i++) out[i] = a[i] / norm;
+      return out;
+    }
+    function euclidean(a,b){ let s=0; for(let i=0;i<a.length;i++){ const d=a[i]-b[i]; s+=d*d;} return Math.sqrt(s); }
+
     // ---------- detection ----------
     async function detectAllSmall(){
       if (!modelsLoaded) return [];
@@ -209,7 +261,6 @@
       const offCtx = off.getContext('2d');
       offCtx.drawImage(video, 0, 0, off.width, off.height);
       try {
-        // chain to get descriptors + age/gender + expressions
         const detections = await faceapi.detectAllFaces(off, new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.45 }))
           .withFaceLandmarks()
           .withFaceDescriptors()
@@ -217,9 +268,10 @@
           .withAgeAndGender();
         return detections.map(d => {
           const b = d.detection.box;
+          const descriptor = l2normalizeFloat32(d.descriptor);
           return {
             box: { x: Math.round(b.x / RESIZE_SCALE), y: Math.round(b.y / RESIZE_SCALE), width: Math.round(b.width / RESIZE_SCALE), height: Math.round(b.height / RESIZE_SCALE) },
-            descriptor: d.descriptor,
+            descriptor,
             age: d.age ?? null,
             gender: d.gender ?? null,
             genderProbability: d.genderProbability ?? null,
@@ -232,7 +284,26 @@
       }
     }
 
-    function euclidean(a,b){ let s=0; for(let i=0;i<a.length;i++){ const d=a[i]-b[i]; s+=d*d;} return Math.sqrt(s); }
+    // re-check at full-res crop for higher accuracy
+    async function recheckFullRes(box){
+      // box is {x,y,width,height} in full coords
+      const off = document.createElement('canvas');
+      off.width = box.width;
+      off.height = box.height;
+      const offCtx = off.getContext('2d');
+      // because video is mirrored with CSS transform we read raw pixels - they correspond to non-mirrored coordinates
+      offCtx.drawImage(video, box.x, box.y, box.width, box.height, 0, 0, box.width, box.height);
+      try {
+        const det = await faceapi.detectSingleFace(off, new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.4 }))
+          .withFaceLandmarks()
+          .withFaceDescriptor();
+        if (!det) return null;
+        return l2normalizeFloat32(det.descriptor);
+      } catch(e){
+        console.warn("recheckFullRes error", e);
+        return null;
+      }
+    }
 
     function findBestMatchLocal(descriptor){
       if (!knownTickets.length) return { found:false, bestId:null, distance:Infinity };
@@ -262,7 +333,7 @@
           const b = d.detection.box;
           return {
             box: { x: Math.round(b.x / RESIZE_SCALE), y: Math.round(b.y / RESIZE_SCALE), width: Math.round(b.width / RESIZE_SCALE), height: Math.round(b.height / RESIZE_SCALE) },
-            descriptor: d.descriptor,
+            descriptor: l2normalizeFloat32(d.descriptor),
             age: d.age,
             gender: d.gender,
             genderProbability: d.genderProbability,
@@ -297,12 +368,11 @@
         const out = new Float32Array(L);
         for (const a of list) for (let j=0;j<L;j++) out[j]+=a[j];
         for (let j=0;j<L;j++) out[j]/=list.length;
-        return out;
+        return l2normalizeFloat32(out);
       }
       function avgNumber(list){ if (!list.length) return null; return list.reduce((a,b)=>a+b,0)/list.length; }
       function aggGender(genders, probs){
         if (!genders.length) return { gender: null, prob: null };
-        // count weighted by prob: female vs male
         const score = genders.reduce((acc,g,i)=> acc + (g === 'female' ? (probs[i]||0) : -(probs[i]||0)), 0);
         return { gender: score >= 0 ? 'female' : 'male', prob: Math.abs(score)/ (probs.reduce((a,b)=>a+b,0)||1) };
       }
@@ -311,7 +381,6 @@
         const keys = Object.keys(exprLists[0]);
         const sum = Object.fromEntries(keys.map(k=>[k,0]));
         for (const e of exprLists) for (const k of keys) sum[k]+= e[k] || 0;
-        // pick top
         const entries = Object.entries(sum).sort((a,b)=>b[1]-a[1]);
         return { expression: entries[0][0], score: entries[0][1] / exprLists.length };
       }
@@ -339,13 +408,30 @@
       frameIdx++;
       if (frameIdx % PROCESS_EVERY_N === 0 && modelsLoaded){
         const dets = await detectAllSmall();
+        // store detections
         latestDetections = dets;
+        // optionally perform re-check for near-threshold matches (to reduce flicker)
+        // if match dist is between (MATCH_THRESHOLD - 0.02) and (MATCH_THRESHOLD + 0.06) do recheck
+        for (const d of latestDetections){
+          const match = findBestMatchLocal(d.descriptor);
+          if (!match.found && match.distance < (MATCH_THRESHOLD + 0.08) && match.distance > (MATCH_THRESHOLD - 0.02)){
+            // recheck on full res
+            const re = await recheckFullRes(d.box);
+            if (re){
+              const finalMatch = findBestMatchLocal(re);
+              if (finalMatch.found){
+                // replace descriptor with recheck descriptor to stabilize overlay
+                d.descriptor = re;
+              }
+            }
+          }
+        }
       }
       drawOverlay();
       requestAnimationFrame(mainLoop);
     }
 
-    // ---------- draw overlay (mirror coords for boxes but keep text readable) ----------
+    // ---------- draw overlay ----------
     function drawOverlay(){
       ctx.clearRect(0,0,canvas.width,canvas.height);
       for (const det of latestDetections){
@@ -356,44 +442,39 @@
           // green rectangle + show stored meta
           ctx.strokeStyle = 'lime'; ctx.lineWidth = Math.max(2, Math.round(Math.min(6, b.width*0.02)));
           ctx.strokeRect(mirroredX, b.y, b.width, b.height);
-
-          // label lines: ticket id, age/gender, expression
           const ticket = knownTickets.find(t => t.id === match.bestId);
           const lines = [];
           lines.push(ticket ? ticket.id : match.bestId);
           if (ticket && ticket.meta){
+            if (ticket.meta.name) lines.push(ticket.meta.name);
             if (ticket.meta.age_estimate != null) lines.push(`age:${ticket.meta.age_estimate}`);
-            if (ticket.meta.gender) lines.push(`${ticket.meta.gender} (${(ticket.meta.genderProbability||0).toFixed(2)})`);
-            if (ticket.meta.topExpression) lines.push(`${ticket.meta.topExpression} ${(ticket.meta.topExpressionScore||0).toFixed(2)}`);
+            if (ticket.meta.gender) lines.push(`${ticket.meta.gender} ${(ticket.meta.genderProbability||0).toFixed(2)}`);
+            if (ticket.meta.topExpression) lines.push(`${ticket.meta.topExpression}`);
           } else {
-            // also show live attributes
             if (det.age != null) lines.push(`age:${det.age.toFixed(1)}`);
-            if (det.gender) lines.push(`${det.gender} (${(det.genderProbability||0).toFixed(2)})`);
-            if (det.expressions) {
+            if (det.gender) lines.push(`${det.gender}`);
+            if (det.expressions){
               const top = Object.entries(det.expressions).sort((a,b)=>b[1]-a[1])[0];
-              if (top) lines.push(`${top[0]} ${(top[1]||0).toFixed(2)}`);
+              if (top) lines.push(`${top[0]}`);
             }
           }
-          // draw background and lines
-          ctx.fillStyle = 'rgba(0,128,0,0.85)';
           const labelText = lines.join(' | ');
+          ctx.fillStyle = 'rgba(0,128,0,0.85)';
           const txtW = Math.min(520, ctx.measureText(labelText).width + 12);
           ctx.fillRect(mirroredX, b.y + b.height - 26, txtW, 26);
           ctx.fillStyle = '#fff'; ctx.font = '14px Arial';
           ctx.fillText(labelText, mirroredX + 6, b.y + b.height - 8);
         } else {
-          // unknown: red circle + live attributes
+          // unknown
           const cx = mirroredX + Math.round(b.width/2), cy = b.y + Math.round(b.height/2), r = Math.round(Math.max(b.width,b.height)/2);
           ctx.strokeStyle = 'rgba(255,80,80,0.95)'; ctx.lineWidth = Math.max(2, Math.round(Math.min(6, b.width*0.02)));
           ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.stroke();
-
-          // show live age/gender/expression (if available)
           const lines = [];
           if (det.age != null) lines.push(`age:${det.age.toFixed(1)}`);
-          if (det.gender) lines.push(`${det.gender} ${(det.genderProbability||0).toFixed(2)}`);
+          if (det.gender) lines.push(`${det.gender}`);
           if (det.expressions){
             const top = Object.entries(det.expressions).sort((a,b)=>b[1]-a[1])[0];
-            if (top) lines.push(`${top[0]} ${(top[1]||0).toFixed(2)}`);
+            if (top) lines.push(`${top[0]}`);
           }
           const labelText = lines.length ? lines.join(' | ') : 'Unknown';
           ctx.fillStyle = 'rgba(200,40,40,0.9)';
@@ -411,4 +492,164 @@
       setStatus("Manual verify: scanning...");
       const dets = await detectAllSmall();
       if (!dets.length){ setStatus("No face detected"); return; }
-   
+      for (const d of dets){
+        const m = findBestMatchLocal(d.descriptor);
+        if (m.found) setMessage(`Ticket: ${m.bestId} (d=${m.distance.toFixed(3)})`, 4000);
+        else setMessage('Unknown', 2000);
+      }
+    });
+
+    refreshBtn.addEventListener('click', async () => {
+      await loadKnownTicketsFromFirebase();
+    });
+
+    // Generate Tickets for currently unknown faces (manual)
+    generateBtn.addEventListener('click', async () => {
+      if (!modelsLoaded) { setStatus("Models loading"); return; }
+      if (!latestDetections || latestDetections.length === 0) { setStatus("No faces visible"); return; }
+
+      const unknownBoxes = [];
+      for (const det of latestDetections){
+        const m = findBestMatchLocal(det.descriptor);
+        if (!m.found) unknownBoxes.push(det.box);
+      }
+      if (!unknownBoxes.length) { setStatus("No unknown faces to save"); return; }
+
+      // UI lock
+      generateBtn.disabled = true;
+      verifyBtn.disabled = true;
+      refreshBtn.disabled = true;
+      savingOverlay.style.display = 'flex';
+      setStatus(`Capturing ${SAMPLES_PER_UNKNOWN} samples for ${unknownBoxes.length} unknown(s)...`);
+
+      try {
+        const results = await sampleAverageForBoxes(unknownBoxes, SAMPLES_PER_UNKNOWN, 180);
+        const valid = results.map((v,i)=>({v,vbox:unknownBoxes[i]})).filter(x=>x.v && x.v.descriptor !== null);
+        if (!valid.length) { setStatus("Capture failed"); return; }
+
+        const savedIds = [];
+        for (const item of valid){
+          const id = await allocateTicketIdOnline();
+          // generate a simple ticket name (optional): "ticket101"
+          const ticketName = `ticket${id.slice(-3)}`; // last digits
+          const meta = {
+            name: ticketName,
+            age_estimate: item.v.age_estimate,
+            gender: item.v.gender,
+            genderProbability: item.v.genderProbability,
+            topExpression: item.v.topExpression,
+            topExpressionScore: item.v.topExpressionScore
+          };
+          try {
+            await saveTicketOnline(id, item.v.descriptor, meta);
+            savedIds.push(id);
+          } catch(e){
+            console.error("saveTicket error", e);
+          }
+        }
+        if (savedIds.length){
+          setMessage(`Saved: ${savedIds.join(', ')}`, 5000);
+          setStatus(`Saved ${savedIds.length} ticket(s)`);
+        } else {
+          setStatus("No tickets saved (error)");
+        }
+      } finally {
+        generateBtn.disabled = false;
+        verifyBtn.disabled = false;
+        refreshBtn.disabled = false;
+        savingOverlay.style.display = 'none';
+      }
+    });
+
+    // render ticket list with edit/save
+    function renderTicketsList(){
+      ticketsList.innerHTML = '';
+      const sorted = knownTickets.slice().sort((a,b)=> a.id.localeCompare(b.id));
+      for (const t of sorted){
+        const div = document.createElement('div'); div.className='ticket-item';
+        const meta = t.meta || {};
+        div.innerHTML = `
+          <div style="font-weight:700">${t.id}</div>
+          <div style="margin-top:6px" class="ticket-row">
+            <input data-id="${t.id}" class="nameInput" placeholder="name" value="${(meta.name||'')}" />
+          </div>
+          <div style="margin-top:6px" class="ticket-row">
+            <input data-id="${t.id}" class="ageInput" placeholder="age" value="${meta.age_estimate!=null?meta.age_estimate:''}" />
+          </div>
+          <div style="display:flex;gap:6px;margin-top:6px;align-items:center">
+            <div style="flex:1">${meta.gender||''} ${meta.topExpression?`| ${meta.topExpression}`:''}</div>
+            <div class="qr"><img style="width:100%;height:100%;border-radius:6px" src="https://chart.googleapis.com/chart?cht=qr&chs=150x150&chl=${encodeURIComponent(location.origin + location.pathname + '?ticket=' + encodeURIComponent(t.id))}" /></div>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <button data-id="${t.id}" class="saveMeta" style="flex:1;background:#10b981;color:#012;padding:8px;border-radius:6px">Save</button>
+            <button data-id="${t.id}" class="deleteMeta" style="flex:1;background:#ef4444;color:#fff;padding:8px;border-radius:6px">Delete</button>
+          </div>
+        `;
+        ticketsList.appendChild(div);
+      }
+
+      // attach events
+      for (const btn of ticketsList.querySelectorAll('.saveMeta')){
+        btn.onclick = async (ev) => {
+          const id = btn.dataset.id;
+          const container = btn.closest('.ticket-item');
+          const name = container.querySelector('.nameInput').value.trim();
+          const age = container.querySelector('.ageInput').value.trim();
+          const payload = {};
+          if (name) payload.name = name;
+          if (age) payload.age_estimate = parseFloat(age);
+          await updateTicketMeta(id, payload);
+        };
+      }
+      for (const btn of ticketsList.querySelectorAll('.deleteMeta')){
+        btn.onclick = async (ev) => {
+          const id = btn.dataset.id;
+          if (!confirm(`Delete ticket ${id}? This will remove it from database.`)) return;
+          try {
+            await set(child(ref(db), `${TICKETS_PATH}/${id}`), null);
+            setMessage(`Deleted ${id}`, 2000);
+            await loadKnownTicketsFromFirebase();
+          } catch(e){
+            console.error("delete error", e);
+            setMessage("Delete failed", 2000);
+          }
+        };
+      }
+    }
+
+    // download JSON
+    downloadJson.addEventListener('click', () => {
+      const exportData = {};
+      for (const t of knownTickets) exportData[t.id] = t.meta || {};
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+      const el = document.createElement('a');
+      el.href = URL.createObjectURL(blob);
+      el.download = 'tickets.json';
+      document.body.appendChild(el);
+      el.click();
+      el.remove();
+    });
+
+    // ---------- init ----------
+    async function init(){
+      try {
+        initFirebase();
+        await loadModels();
+        await startCamera();
+        await loadKnownTicketsFromFirebase();
+        setStatus("Ready — all models active. Use Generate Tickets to save unknown faces.");
+        mainLoop();
+        setInterval(loadKnownTicketsFromFirebase, 60_000);
+      } catch(e){
+        console.error("Init error:", e);
+        setStatus("Initialization failed - see console");
+      }
+    }
+    init();
+
+    // expose debug
+    window.__faceTickets = { knownTickets, latestDetections, loadKnownTicketsFromFirebase };
+
+  </script>
+</body>
+</html>
