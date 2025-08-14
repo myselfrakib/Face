@@ -2,63 +2,67 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Face Ticketing — Generate Tickets (manual)</title>
+  <title>Face Ticketing — Full Models</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
     :root{--bg:#071022;--panel:#0b1320;--accent:#10b981;--text:#e6f7f1}
-    body{margin:0;font-family:Inter,Arial;background:var(--bg);color:var(--text);display:flex;align-items:center;justify-content:center;height:100vh}
-    .app{display:flex;gap:18px;width:100%;max-width:1200px;padding:20px;box-sizing:border-box}
-    .camera{position:relative;width:720px}
-    video{width:720px;height:540px;background:#000;border-radius:10px;object-fit:cover;transform:scaleX(-1)} /* mirrored for user */
-    canvas{position:absolute;left:0;top:0;width:720px;height:540px;pointer-events:none}
-    .panel{width:360px;background:var(--panel);padding:16px;border-radius:10px}
-    .btn{width:100%;padding:12px;border-radius:8px;border:none;cursor:pointer;font-weight:700;margin-top:8px}
-    .btn-generate{background:#10b981;color:#012}
+    body{margin:0;font-family:Inter,Arial;background:var(--bg);color:var(--text);display:flex;align-items:center;justify-content:center;min-height:100vh}
+    .wrap{width:100%;max-width:980px;padding:18px;box-sizing:border-box}
+    .camera-area{display:flex;flex-direction:column;align-items:center;gap:12px}
+    .video-box{position:relative;width:760px}
+    video{width:760px;height:570px;background:#000;border-radius:10px;object-fit:cover;transform:scaleX(-1); /* mirrored */}
+    canvas{position:absolute;left:0;top:0;width:760px;height:570px;pointer-events:none}
+    #datetime{position:absolute;left:12px;top:12px;background:rgba(0,0,0,0.45);padding:8px 10px;border-radius:8px;z-index:30}
+    #msg{position:absolute;right:12px;top:12px;z-index:30;text-align:right}
+    #msg .m{background:rgba(0,0,0,0.6);padding:6px 10px;border-radius:8px}
+    .controls{display:flex;gap:12px;justify-content:center;margin-top:6px}
+    button{padding:12px 18px;border-radius:8px;border:none;font-weight:700;cursor:pointer}
+    .btn-gen{background:var(--accent);color:#012}
     .btn-verify{background:#3b82f6;color:#fff}
-    .status{margin-top:12px;color:#bde;font-size:14px;min-height:46px}
-    .small{font-size:13px;color:#9db;margin-top:8px}
-    #datetime{position:absolute;left:12px;top:12px;background:rgba(0,0,0,0.45);padding:8px 10px;border-radius:8px;z-index:20}
-    #message{position:absolute;right:12px;top:12px;z-index:20;text-align:right}
-    #message .msg{background:rgba(0,0,0,0.6);padding:6px 10px;border-radius:8px;color:#fff}
+    .btn-refresh{background:#f59e0b;color:#012}
+    .info-panel{margin-top:14px;background:var(--panel);padding:12px;border-radius:10px}
+    .small{font-size:13px;color:#9db}
+    input[type=range]{width:100%}
   </style>
 </head>
 <body>
-  <div class="app">
-    <div class="camera">
-      <div id="datetime">--</div>
-      <div id="message"><div class="msg">Initializing...</div></div>
-      <video id="video" autoplay muted playsinline></video>
-      <canvas id="overlay" width="720" height="540"></canvas>
-    </div>
+  <div class="wrap">
+    <div class="camera-area">
+      <div class="video-box">
+        <div id="datetime">--</div>
+        <div id="msg"><div class="m">Initializing...</div></div>
+        <video id="video" autoplay muted playsinline></video>
+        <canvas id="overlay" width="760" height="570"></canvas>
+      </div>
 
-    <div class="panel">
-      <h3 style="margin:0 0 8px 0">Face Ticket System (Online-only)</h3>
+      <div class="controls" role="toolbar" aria-label="controls">
+        <button id="generateBtn" class="btn-gen">Generate Tickets for Unknowns</button>
+        <button id="verifyBtn" class="btn-verify">Verify Now</button>
+        <button id="refreshBtn" class="btn-refresh">Reload Known Faces</button>
+      </div>
 
-      <button id="generateBtn" class="btn btn-generate">Generate Tickets for Unknowns</button>
-      <button id="verifyBtn" class="btn btn-verify">Quick Verify (scan now)</button>
-      <button id="refreshBtn" class="btn" style="background:#f59e0b;color:#012">Reload Known Faces</button>
-
-      <div class="status" id="status">Loading models...</div>
-
-      <div class="small">Threshold: <span id="threshVal">0.55</span></div>
-      <input id="threshold" type="range" min="0.40" max="0.70" step="0.01" value="0.55" style="width:100%" />
-
-      <div class="small">Process every N frames: <span id="procVal">2</span></div>
-      <input id="proc" type="range" min="1" max="4" step="1" value="2" style="width:100%" />
-
-      <div class="small" style="margin-top:10px">When you press <b>Generate Tickets</b>, the app captures multiple samples per unknown face, averages them and saves descriptors under <code>/faceTickets/{ticketId}</code>.</div>
+      <div class="info-panel">
+        <div><strong id="status">Loading models...</strong></div>
+        <div class="small">Threshold: <span id="threshVal">0.55</span></div>
+        <input id="threshold" type="range" min="0.40" max="0.70" step="0.01" value="0.55" />
+        <div class="small" style="margin-top:8px">Process every N frames: <span id="procVal">2</span></div>
+        <input id="proc" type="range" min="1" max="4" step="1" value="2" />
+        <div class="small" style="margin-top:8px">Samples per unknown during Generate: <span id="samplesVal">5</span></div>
+        <input id="samples" type="range" min="3" max="9" step="2" value="5" />
+        <div class="small" style="margin-top:8px">Saved ticket records contain: encoding(128 floats), age_estimate, gender, genderProbability, topExpression, timestamp.</div>
+      </div>
     </div>
   </div>
 
-  <!-- vladmandic face-api bundle (includes tf) -->
+  <!-- use vladmandic bundle (includes tf backend) -->
   <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.min.js"></script>
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-app.js";
     import { getDatabase, ref, get, set, child } from "https://www.gstatic.com/firebasejs/12.1.0/firebase-database.js";
 
-    // ---------- CONFIG ----------
-    const MODEL_URL = 'https://raw.githubusercontent.com/myselfrakib/Face/main/models'; // your GitHub models folder
+    // ---------- CONFIG (adjust MODEL_URL if needed) ----------
+    const MODEL_URL = 'https://raw.githubusercontent.com/myselfrakib/Face/main/models';
     const FIREBASE_CONFIG = {
       apiKey: "AIzaSyDsn16p7w8b-x8pEA_WTO5F2oUk4MHwcUc",
       authDomain: "wavetravel-3c4c4.firebaseapp.com",
@@ -76,43 +80,93 @@
     const canvas = document.getElementById('overlay');
     const ctx = canvas.getContext('2d');
     const statusEl = document.getElementById('status');
-    const messageEl = document.getElementById('message');
+    const msgEl = document.getElementById('msg');
     const datetimeEl = document.getElementById('datetime');
     const generateBtn = document.getElementById('generateBtn');
     const verifyBtn = document.getElementById('verifyBtn');
     const refreshBtn = document.getElementById('refreshBtn');
     const thresholdInput = document.getElementById('threshold');
     const procInput = document.getElementById('proc');
+    const samplesInput = document.getElementById('samples');
     const threshVal = document.getElementById('threshVal');
     const procVal = document.getElementById('procVal');
+    const samplesVal = document.getElementById('samplesVal');
 
     let MATCH_THRESHOLD = parseFloat(thresholdInput.value);
     let PROCESS_EVERY_N = parseInt(procInput.value,10) || 2;
+    let SAMPLES_PER_UNKNOWN = parseInt(samplesInput.value,10) || 5;
     threshVal.innerText = MATCH_THRESHOLD.toFixed(2);
     procVal.innerText = PROCESS_EVERY_N;
+    samplesVal.innerText = SAMPLES_PER_UNKNOWN;
+
     thresholdInput.oninput = ()=> { MATCH_THRESHOLD = parseFloat(thresholdInput.value); threshVal.innerText = MATCH_THRESHOLD.toFixed(2); };
     procInput.oninput = ()=> { PROCESS_EVERY_N = parseInt(procInput.value,10); procVal.innerText = PROCESS_EVERY_N; };
+    samplesInput.oninput = ()=> { SAMPLES_PER_UNKNOWN = parseInt(samplesInput.value,10); samplesVal.innerText = SAMPLES_PER_UNKNOWN; };
 
-    function setStatus(t){ statusEl.innerText = t; messageEl.innerHTML = `<div class="msg">${t}</div>`; }
-    function setMessage(t, ms=2000){ messageEl.innerHTML = `<div class="msg">${t}</div>`; setTimeout(()=> messageEl.innerHTML='', ms); }
+    function setStatus(t){ statusEl.innerText = t; msgEl.innerHTML = `<div class="m">${t}</div>`; }
+    function setMessage(t, ms=2500){ msgEl.innerHTML = `<div class="m">${t}</div>`; setTimeout(()=> msgEl.innerHTML='', ms); }
     function updateDateTime(){ datetimeEl.innerText = new Date().toLocaleString(); }
     setInterval(updateDateTime, 1000); updateDateTime();
 
     // ---------- state ----------
     let db;
-    let knownTickets = []; // {id, encoding: Float32Array}
+    let knownTickets = []; // {id, encoding: Float32Array, meta}
     let modelsLoaded = false;
     let frameIdx = 0;
     let latestDetections = [];
 
-    // ---------- firebase init ----------
+    // ---------- firebase ----------
     function initFirebase(){
       const app = initializeApp(FIREBASE_CONFIG);
       db = getDatabase(app);
       setStatus("Firebase initialized");
     }
 
-    // ---------- load models ----------
+    async function loadKnownTicketsFromFirebase(){
+      try {
+        setStatus("Loading known tickets from Firebase...");
+        const snap = await get(ref(db, TICKETS_PATH));
+        const data = snap.exists() ? snap.val() : {};
+        const loaded = [];
+        for (const [k,v] of Object.entries(data || {})){
+          const enc = v.encoding || v.descriptor || null;
+          if (Array.isArray(enc) && enc.length >= 128) loaded.push({ id:k, encoding: new Float32Array(enc), meta: v });
+        }
+        knownTickets = loaded;
+        setStatus(`Loaded ${knownTickets.length} tickets`);
+      } catch(e){
+        console.error("loadKnownTicketsFromFirebase", e);
+        setStatus("Failed to load tickets (see console)");
+      }
+    }
+
+    async function allocateTicketIdOnline(){
+      const now = new Date();
+      const prefix = String(now.getMonth()+1).padStart(2,'0') + String(now.getFullYear());
+      try {
+        const snap = await get(ref(db, TICKETS_PATH));
+        const data = snap.exists() ? snap.val() : {};
+        const keys = Object.keys(data || {});
+        const samePrefix = keys.filter(k => String(k).startsWith(prefix)).map(k => parseInt(k,10)).filter(n => !isNaN(n));
+        if (!samePrefix.length) return prefix + '101';
+        return String(Math.max(...samePrefix) + 1);
+      } catch(e){
+        console.warn('allocateTicketIdOnline error', e);
+        return prefix + String(Math.floor(Date.now() / 1000));
+      }
+    }
+
+    async function saveTicketOnline(ticketId, encoding, meta={}){
+      const payload = Object.assign({
+        encoding: Array.from(encoding),
+        timestamp: new Date().toISOString()
+      }, meta);
+      await set(child(ref(db), `${TICKETS_PATH}/${ticketId}`), payload);
+      knownTickets.push({ id: ticketId, encoding: new Float32Array(encoding), meta: payload });
+      setStatus(`Saved ${ticketId}`);
+    }
+
+    // ---------- models & camera ----------
     async function loadModels(){
       setStatus("Setting TF backend and loading models...");
       try {
@@ -124,13 +178,14 @@
       await Promise.all([
         faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
         faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
-        faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
+        faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
+        faceapi.nets.ageGenderNet.loadFromUri(MODEL_URL),
+        faceapi.nets.faceExpressionNet.loadFromUri(MODEL_URL)
       ]);
       modelsLoaded = true;
       setStatus("Models loaded");
     }
 
-    // ---------- camera ----------
     async function startCamera(){
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: { width:1280, height:720 } });
@@ -145,48 +200,6 @@
       }
     }
 
-    // ---------- db helpers ----------
-    async function loadKnownTicketsFromFirebase(){
-      try {
-        setStatus("Loading known tickets from Firebase...");
-        const snap = await get(ref(db, TICKETS_PATH));
-        const data = snap.exists() ? snap.val() : {};
-        const loaded = [];
-        for (const [k,v] of Object.entries(data || {})){
-          const enc = v.encoding || v.descriptor || null;
-          if (Array.isArray(enc) && enc.length >= 128) loaded.push({ id:k, encoding: new Float32Array(enc), meta:v });
-        }
-        knownTickets = loaded;
-        setStatus(`Loaded ${knownTickets.length} tickets`);
-      } catch(e){
-        console.error("loadKnownTicketsFromFirebase", e);
-        setStatus("Failed to load tickets (check console)");
-      }
-    }
-
-    async function allocateTicketIdOnline(){
-      const now = new Date();
-      const prefix = String(now.getMonth()+1).padStart(2,'0') + String(now.getFullYear());
-      try {
-        const snap = await get(ref(db, TICKETS_PATH));
-        const data = snap.exists() ? snap.val() : {};
-        const keys = Object.keys(data || {});
-        const samePrefix = keys.filter(k => k.startsWith(prefix)).map(k => parseInt(k,10)).filter(n => !isNaN(n));
-        if (!samePrefix.length) return prefix + '101';
-        return String(Math.max(...samePrefix) + 1);
-      } catch(e){
-        console.warn('allocateTicketIdOnline error', e);
-        return prefix + String(Math.floor(Date.now() / 1000));
-      }
-    }
-
-    async function saveTicketOnline(ticketId, encoding, meta={}){
-      const payload = Object.assign({ encoding: Array.from(encoding), timestamp: new Date().toISOString() }, meta);
-      await set(child(ref(db), `${TICKETS_PATH}/${ticketId}`), payload);
-      knownTickets.push({ id: ticketId, encoding: new Float32Array(encoding), meta: payload });
-      setStatus(`Saved ${ticketId}`);
-    }
-
     // ---------- detection ----------
     async function detectAllSmall(){
       if (!modelsLoaded) return [];
@@ -196,14 +209,21 @@
       const offCtx = off.getContext('2d');
       offCtx.drawImage(video, 0, 0, off.width, off.height);
       try {
+        // chain to get descriptors + age/gender + expressions
         const detections = await faceapi.detectAllFaces(off, new faceapi.TinyFaceDetectorOptions({ scoreThreshold: 0.45 }))
           .withFaceLandmarks()
-          .withFaceDescriptors();
+          .withFaceDescriptors()
+          .withFaceExpressions()
+          .withAgeAndGender();
         return detections.map(d => {
           const b = d.detection.box;
           return {
             box: { x: Math.round(b.x / RESIZE_SCALE), y: Math.round(b.y / RESIZE_SCALE), width: Math.round(b.width / RESIZE_SCALE), height: Math.round(b.height / RESIZE_SCALE) },
-            descriptor: d.descriptor
+            descriptor: d.descriptor,
+            age: d.age ?? null,
+            gender: d.gender ?? null,
+            genderProbability: d.genderProbability ?? null,
+            expressions: d.expressions ? Object.fromEntries(Object.entries(d.expressions)) : null
           };
         });
       } catch(e){
@@ -224,10 +244,9 @@
       return { found: best.dist <= MATCH_THRESHOLD, bestId: best.id, distance: best.dist };
     }
 
-    // ---------- sampling (average descriptors) ----------
+    // ---------- sampling/averaging attributes ----------
     async function sampleAverageForBoxes(boxes, samplesPerBox=5, delayMs=180){
-      // boxes are in full coordinates: {x,y,width,height}
-      const accum = boxes.map(()=>[]);
+      const accum = boxes.map(()=>({ descriptors:[], ages:[], genders:[], genderProbs:[], expressions:[] }));
       for (let s=0;s<samplesPerBox;s++){
         const off = document.createElement('canvas');
         off.width = Math.max(1, Math.floor(video.videoWidth * RESIZE_SCALE));
@@ -236,39 +255,86 @@
         offCtx.drawImage(video, 0, 0, off.width, off.height);
         const dets = await faceapi.detectAllFaces(off, new faceapi.TinyFaceDetectorOptions({ scoreThreshold:0.45 }))
           .withFaceLandmarks()
-          .withFaceDescriptors();
+          .withFaceDescriptors()
+          .withFaceExpressions()
+          .withAgeAndGender();
         const fullDets = dets.map(d => {
           const b = d.detection.box;
-          return { box: { x: Math.round(b.x / RESIZE_SCALE), y: Math.round(b.y / RESIZE_SCALE), width: Math.round(b.width / RESIZE_SCALE), height: Math.round(b.height / RESIZE_SCALE) }, descriptor: d.descriptor };
+          return {
+            box: { x: Math.round(b.x / RESIZE_SCALE), y: Math.round(b.y / RESIZE_SCALE), width: Math.round(b.width / RESIZE_SCALE), height: Math.round(b.height / RESIZE_SCALE) },
+            descriptor: d.descriptor,
+            age: d.age,
+            gender: d.gender,
+            genderProbability: d.genderProbability,
+            expressions: d.expressions
+          };
         });
-        // match each requested box to nearest detection by center distance
+        // match each target box to nearest detection by center
         for (let i=0;i<boxes.length;i++){
           const tb = boxes[i];
-          let best = { det:null, score:-Infinity };
+          let best={det:null,score:-Infinity};
           const tcx = tb.x + tb.width/2, tcy = tb.y + tb.height/2;
           for (const fd of fullDets){
             const cx = fd.box.x + fd.box.width/2, cy = fd.box.y + fd.box.height/2;
             const dist = Math.hypot(cx - tcx, cy - tcy);
             const score = 1/(1+dist);
-            if (score > best.score) best = { det: fd, score };
+            if (score > best.score) best = {det: fd, score};
           }
-          if (best.det) accum[i].push(best.det.descriptor);
+          if (best.det){
+            accum[i].descriptors.push(best.det.descriptor);
+            if (best.det.age != null) accum[i].ages.push(best.det.age);
+            if (best.det.gender != null) accum[i].genders.push(best.det.gender);
+            if (best.det.genderProbability != null) accum[i].genderProbs.push(best.det.genderProbability);
+            if (best.det.expressions) accum[i].expressions.push(best.det.expressions);
+          }
         }
         await new Promise(r=>setTimeout(r, delayMs));
       }
-      // average
-      function avg(list){
-        if (!list || list.length===0) return null;
+      // average results
+      function avgDescriptors(list){
+        if (!list.length) return null;
         const L = list[0].length;
         const out = new Float32Array(L);
         for (const a of list) for (let j=0;j<L;j++) out[j]+=a[j];
         for (let j=0;j<L;j++) out[j]/=list.length;
         return out;
       }
-      return accum.map(lst => avg(lst));
+      function avgNumber(list){ if (!list.length) return null; return list.reduce((a,b)=>a+b,0)/list.length; }
+      function aggGender(genders, probs){
+        if (!genders.length) return { gender: null, prob: null };
+        // count weighted by prob: female vs male
+        const score = genders.reduce((acc,g,i)=> acc + (g === 'female' ? (probs[i]||0) : -(probs[i]||0)), 0);
+        return { gender: score >= 0 ? 'female' : 'male', prob: Math.abs(score)/ (probs.reduce((a,b)=>a+b,0)||1) };
+      }
+      function aggExpressions(exprLists){
+        if (!exprLists.length) return { expression: null, score: null };
+        const keys = Object.keys(exprLists[0]);
+        const sum = Object.fromEntries(keys.map(k=>[k,0]));
+        for (const e of exprLists) for (const k of keys) sum[k]+= e[k] || 0;
+        // pick top
+        const entries = Object.entries(sum).sort((a,b)=>b[1]-a[1]);
+        return { expression: entries[0][0], score: entries[0][1] / exprLists.length };
+      }
+
+      return accum.map(a => {
+        const desc = avgDescriptors(a.descriptors);
+        const age = avgNumber(a.ages);
+        const genders = a.genders;
+        const genderProbs = a.genderProbs;
+        const genderAgg = aggGender(genders, genderProbs);
+        const exprAgg = aggExpressions(a.expressions);
+        return {
+          descriptor: desc,
+          age_estimate: age ? Number(age.toFixed(1)) : null,
+          gender: genderAgg.gender,
+          genderProbability: genderAgg.prob ? Number(genderAgg.prob.toFixed(3)) : null,
+          topExpression: exprAgg.expression,
+          topExpressionScore: exprAgg.score ? Number(exprAgg.score.toFixed(3)) : null
+        };
+      });
     }
 
-    // ---------- main loop (detect & draw) ----------
+    // ---------- main loop ----------
     async function mainLoop(){
       frameIdx++;
       if (frameIdx % PROCESS_EVERY_N === 0 && modelsLoaded){
@@ -279,121 +345,70 @@
       requestAnimationFrame(mainLoop);
     }
 
-    // ---------- drawing: NOTE we DO NOT use ctx.setTransform to avoid mirrored text ----------
+    // ---------- draw overlay (mirror coords for boxes but keep text readable) ----------
     function drawOverlay(){
       ctx.clearRect(0,0,canvas.width,canvas.height);
       for (const det of latestDetections){
         const b = det.box;
-        // compute mirrored X because video is mirrored via CSS transform
         const mirroredX = canvas.width - b.x - b.width;
-
         const match = findBestMatchLocal(det.descriptor);
         if (match.found){
-          ctx.strokeStyle = 'lime';
-          ctx.lineWidth = Math.max(2, Math.round(Math.min(6, b.width*0.02)));
+          // green rectangle + show stored meta
+          ctx.strokeStyle = 'lime'; ctx.lineWidth = Math.max(2, Math.round(Math.min(6, b.width*0.02)));
           ctx.strokeRect(mirroredX, b.y, b.width, b.height);
 
-          // label background & text (text will be normal/readable)
-          const label = match.bestId || 'ticket';
+          // label lines: ticket id, age/gender, expression
+          const ticket = knownTickets.find(t => t.id === match.bestId);
+          const lines = [];
+          lines.push(ticket ? ticket.id : match.bestId);
+          if (ticket && ticket.meta){
+            if (ticket.meta.age_estimate != null) lines.push(`age:${ticket.meta.age_estimate}`);
+            if (ticket.meta.gender) lines.push(`${ticket.meta.gender} (${(ticket.meta.genderProbability||0).toFixed(2)})`);
+            if (ticket.meta.topExpression) lines.push(`${ticket.meta.topExpression} ${(ticket.meta.topExpressionScore||0).toFixed(2)}`);
+          } else {
+            // also show live attributes
+            if (det.age != null) lines.push(`age:${det.age.toFixed(1)}`);
+            if (det.gender) lines.push(`${det.gender} (${(det.genderProbability||0).toFixed(2)})`);
+            if (det.expressions) {
+              const top = Object.entries(det.expressions).sort((a,b)=>b[1]-a[1])[0];
+              if (top) lines.push(`${top[0]} ${(top[1]||0).toFixed(2)}`);
+            }
+          }
+          // draw background and lines
           ctx.fillStyle = 'rgba(0,128,0,0.85)';
-          const textW = Math.min(260, ctx.measureText(label).width + 12);
-          ctx.fillRect(mirroredX, b.y + b.height - 26, textW, 26);
-          ctx.fillStyle = '#fff';
-          ctx.font = '16px Arial';
-          ctx.fillText(label, mirroredX + 6, b.y + b.height - 6);
+          const labelText = lines.join(' | ');
+          const txtW = Math.min(520, ctx.measureText(labelText).width + 12);
+          ctx.fillRect(mirroredX, b.y + b.height - 26, txtW, 26);
+          ctx.fillStyle = '#fff'; ctx.font = '14px Arial';
+          ctx.fillText(labelText, mirroredX + 6, b.y + b.height - 8);
         } else {
-          // unknown: draw a circle around face (mirrored coords)
+          // unknown: red circle + live attributes
           const cx = mirroredX + Math.round(b.width/2), cy = b.y + Math.round(b.height/2), r = Math.round(Math.max(b.width,b.height)/2);
-          ctx.strokeStyle = 'rgba(255,80,80,0.95)';
-          ctx.lineWidth = Math.max(2, Math.round(Math.min(6, b.width*0.02)));
+          ctx.strokeStyle = 'rgba(255,80,80,0.95)'; ctx.lineWidth = Math.max(2, Math.round(Math.min(6, b.width*0.02)));
           ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.stroke();
 
-          // label
+          // show live age/gender/expression (if available)
+          const lines = [];
+          if (det.age != null) lines.push(`age:${det.age.toFixed(1)}`);
+          if (det.gender) lines.push(`${det.gender} ${(det.genderProbability||0).toFixed(2)}`);
+          if (det.expressions){
+            const top = Object.entries(det.expressions).sort((a,b)=>b[1]-a[1])[0];
+            if (top) lines.push(`${top[0]} ${(top[1]||0).toFixed(2)}`);
+          }
+          const labelText = lines.length ? lines.join(' | ') : 'Unknown';
           ctx.fillStyle = 'rgba(200,40,40,0.9)';
-          ctx.fillRect(mirroredX, b.y + b.height - 26, 110, 26);
+          const txtW = Math.min(260, ctx.measureText(labelText).width + 12);
+          ctx.fillRect(mirroredX, b.y + b.height - 26, txtW, 26);
           ctx.fillStyle = '#fff'; ctx.font = '14px Arial';
-          ctx.fillText('Unknown', mirroredX + 6, b.y + b.height - 6);
+          ctx.fillText(labelText, mirroredX + 6, b.y + b.height - 8);
         }
       }
       updateDateTime();
     }
 
-    // ---------- UI actions ----------
+    // ---------- UI handlers ----------
     verifyBtn.addEventListener('click', async () => {
       setStatus("Manual verify: scanning...");
       const dets = await detectAllSmall();
       if (!dets.length){ setStatus("No face detected"); return; }
-      for (const d of dets){
-        const m = findBestMatchLocal(d.descriptor);
-        if (m.found) setMessage(`Ticket: ${m.bestId} (d=${m.distance.toFixed(3)})`, 4000);
-        else setMessage('Unknown', 2000);
-      }
-    });
-
-    refreshBtn.addEventListener('click', async () => {
-      await loadKnownTicketsFromFirebase();
-    });
-
-    // Generate Tickets (manual) - samples each unknown face, averages, saves
-    generateBtn.addEventListener('click', async () => {
-      if (!modelsLoaded) { setStatus("Models loading"); return; }
-      if (!latestDetections || latestDetections.length === 0) { setStatus("No faces visible"); return; }
-
-      // collect unknown boxes
-      const unknownBoxes = [];
-      for (const det of latestDetections) {
-        const m = findBestMatchLocal(det.descriptor);
-        if (!m.found) unknownBoxes.push(det.box);
-      }
-      if (!unknownBoxes.length) { setStatus("No unknown faces to save"); return; }
-
-      setStatus(`Capturing samples for ${unknownBoxes.length} unknown(s)...`);
-      // average 5 samples per unknown
-      const averaged = await sampleAverageForBoxes(unknownBoxes, 5, 160);
-      const valid = averaged.map((v,i)=>({avg:v,box:unknownBoxes[i]})).filter(x=>x.avg!==null);
-      if (!valid.length){ setStatus("Capture failed"); return; }
-
-      // allocate IDs and save
-      const now = new Date();
-      const savedIds = [];
-      for (let i=0;i<valid.length;i++){
-        const id = await allocateTicketIdOnline();
-        try {
-          await saveTicketOnline(id, valid[i].avg, { note: 'manual-generated' });
-          savedIds.push(id);
-        } catch (e) {
-          console.error("save error", e);
-        }
-      }
-
-      if (savedIds.length) {
-        setMessage(`Saved: ${savedIds.join(', ')}`, 4000);
-        setStatus(`Saved ${savedIds.length} ticket(s)`);
-      } else {
-        setStatus("No tickets saved (error)");
-      }
-    });
-
-    // ---------- init ----------
-    async function init(){
-      try {
-        initFirebase();
-        await loadModels();
-        await startCamera();
-        await loadKnownTicketsFromFirebase();
-        setStatus("Ready (online-only). Use Generate Tickets to save unknown faces manually.");
-        mainLoop();
-        setInterval(loadKnownTicketsFromFirebase, 60_000); // refresh every 60s
-      } catch(e){
-        console.error("Init error:", e);
-        setStatus("Initialization failed - see console");
-      }
-    }
-    init();
-
-    // debugging exposure
-    window.__faceTickets = { knownTickets, latestDetections, loadKnownTicketsFromFirebase };
-
-  </script>
-</body>
-</html>
+   
